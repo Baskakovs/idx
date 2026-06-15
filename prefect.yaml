@@ -5,9 +5,6 @@ pull:
   - prefect.deployments.steps.git_clone:
       repository: https://github.com/Baskakovs/idx
       branch: add_readme
-  - prefect.deployments.steps.run_shell_script:
-      directory: "{{ git_clone.directory }}"
-      script: pip install .
 
 deployments:
   - name: stoxx-600-scraper
