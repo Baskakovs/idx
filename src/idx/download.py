@@ -4,11 +4,16 @@ from __future__ import annotations
 
 import asyncio
 import calendar
+import logging
 from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
 
 import httpx
+from prefect import task
+from prefect.cache_policies import NO_CACHE
+
+logger = logging.getLogger(__name__)
 
 PDF_URL_TEMPLATE = "https://www.stoxx.com/document/Reports/SelectionList/{year}/{month_name}/sl_{symbol}_{ym}.pdf"
 CSV_URL_TEMPLATE = (
@@ -134,6 +139,7 @@ async def _download_pdf_period(
     return None
 
 
+@task(cache_policy=NO_CACHE)
 async def download_selection_lists(
     start: date = START_DATE,
     end: date | None = None,
@@ -178,5 +184,9 @@ async def download_selection_lists(
             result.downloaded.append(filepath)
         else:
             result.missed.append((year, month))
+
+    logger.info("Downloaded %d files, missed %d periods", len(result.downloaded), len(result.missed))
+    if result.missed:
+        logger.warning("Missed periods: %s", result.missed)
 
     return result

@@ -5,6 +5,8 @@ from dataclasses import asdict
 from datetime import date
 
 import polars as pl
+from prefect import flow
+from prefect.artifacts import acreate_markdown_artifact
 
 from idx.download import download_selection_lists
 from idx.enrichment import report_unresolved_assets, resolve_yukka_ids
@@ -13,10 +15,17 @@ from idx.ranking import build_ranking_table, validate_ranking_table
 from idx.storage import write_assets, write_ranks, write_reviews
 
 
-async def main() -> None:
-    """Download, parse, and process STOXX selection lists."""
-    # DEV: limit to 3 periods for faster iteration
-    result = await download_selection_lists(periods=[(2024, 9), (2024, 12), (2025, 3)])
+@flow(name="stoxx-600-scraper", log_prints=True)
+async def main(
+    periods: list[tuple[int, int]] | None = None,
+) -> None:
+    """Download, parse, and process STOXX selection lists.
+
+    Args:
+        periods: Explicit (year, month) tuples to download.
+            When None, downloads the full historical range.
+    """
+    result = await download_selection_lists(periods=periods)
 
     # Parse all downloaded files and group by review_date
     review_date_groups: dict[date, tuple[list, list]] = {}
@@ -68,6 +77,14 @@ async def main() -> None:
     write_ranks(ranking_df)
     for entries_df, membership_df, rd in zip(entries_dfs, membership_dfs, sorted_dates, strict=True):
         write_reviews(entries_df, membership_df, rd)
+
+    await acreate_markdown_artifact(
+        key="pipeline-summary",
+        markdown=f"**Reviews processed:** {len(sorted_dates)}\n\n"
+        f"**Assets:** {len(enriched_assets)} rows\n\n"
+        f"**Rankings:** {len(ranking_df)} daily rows",
+        description="Pipeline run summary",
+    )
 
 
 if __name__ == "__main__":
