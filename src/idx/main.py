@@ -9,10 +9,12 @@ import polars as pl
 from idx.download import download_selection_lists
 from idx.enrichment import report_unresolved_assets, resolve_yukka_ids
 from idx.extract import compute_membership, parse_selection_list
+from idx.ranking import build_ranking_table, validate_ranking_table
 
 
 async def main() -> None:
     """Download, parse, and process STOXX selection lists."""
+    # DEV: limit to a few periods for faster iteration
     result = await download_selection_lists()
 
     # Parse all downloaded files and group by review_date
@@ -44,7 +46,7 @@ async def main() -> None:
         membership = compute_membership(entries, prior_membership)
 
         assets_dfs.append(pl.DataFrame([asdict(a) for a in assets]))
-        entries_dfs.append(pl.DataFrame([asdict(e) for e in entries]))
+        entries_dfs.append(pl.DataFrame([asdict(e) for e in entries], infer_schema_length=None))
         membership_dfs.append(pl.DataFrame([asdict(m) for m in membership]))
         prior_membership = {m.internal_key for m in membership if m.is_member}
 
@@ -52,6 +54,10 @@ async def main() -> None:
     all_assets = pl.concat(assets_dfs).unique(subset=["internal_key"])
     enriched_assets = resolve_yukka_ids(all_assets)
     report_unresolved_assets(enriched_assets)
+
+    # Build and validate ranking table
+    ranking_df = build_ranking_table(enriched_assets, entries_dfs, membership_dfs, sorted_dates)
+    validate_ranking_table(ranking_df, sorted_dates)
 
 
 if __name__ == "__main__":

@@ -7,17 +7,20 @@ import os
 
 import httpx
 import polars as pl
+from dotenv import load_dotenv
 from prefect import task
 from prefect.artifacts import create_table_artifact
+from prefect.cache_policies import NO_CACHE
 
 logger = logging.getLogger(__name__)
 
-_BASE_URL = "https://api.yukkalab.com"
+_BASE_URL = "https://metadata.api.yukkalab.com"
 _BATCH_SIZE = 100
 
 
 def _build_client() -> httpx.Client:
     """Build an authenticated HTTP client for the Yukka metadata API."""
+    load_dotenv()
     token = os.environ["YUKKA_TOKEN"]
     return httpx.Client(
         base_url=_BASE_URL,
@@ -49,7 +52,7 @@ def _batch_lookup(client: httpx.Client, endpoint: str, identifiers: list[str]) -
     return result
 
 
-@task
+@task(cache_policy=NO_CACHE)
 def resolve_yukka_ids(assets_df: pl.DataFrame) -> pl.DataFrame:
     """Enrich assets DataFrame with yukka_id column via ISIN and RIC lookups.
 
@@ -122,7 +125,7 @@ def resolve_yukka_ids(assets_df: pl.DataFrame) -> pl.DataFrame:
     return assets_df.join(mapping_df, on="internal_key", how="left")
 
 
-@task
+@task(cache_policy=NO_CACHE)
 def report_unresolved_assets(assets_df: pl.DataFrame) -> None:
     """Create a Prefect artifact reporting all assets without a Yukka ID.
 
