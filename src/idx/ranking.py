@@ -68,6 +68,10 @@ def build_ranking_table(
             if row["internal_key"] in member_keys:
                 ric_rank[ric] = row["rank"]
 
+        # Re-rank members 1-600 by original rank order
+        sorted_rics = sorted(ric_rank.items(), key=lambda x: x[1])
+        ric_rank = {ric: i + 1 for i, (ric, _) in enumerate(sorted_rics)}
+
         # Members get their rank; all other known RICs get 0 (sentinel for exit)
         for ric in all_known_rics:
             rank = ric_rank.get(ric, 0)
@@ -99,7 +103,7 @@ def build_ranking_table(
 
 @task(cache_policy=NO_CACHE)
 def validate_ranking_table(ranking_df: pl.DataFrame, review_dates: list[date]) -> None:
-    """Check that each review date row in the ranking table has ranks covering 1-100.
+    """Check that each review date row in the ranking table has ranks covering 1-600.
 
     Args:
         ranking_df: Wide-format ranking DataFrame (date column + RIC columns).
@@ -123,15 +127,15 @@ def validate_ranking_table(ranking_df: pl.DataFrame, review_dates: list[date]) -
             if val is not None:
                 ranks.add(int(val))
 
-        expected = set(range(1, 101))
+        expected = set(range(1, 601))
         missing = expected - ranks
         if missing:
             logger.warning(
-                "Ranking validation FAILED for %s: missing %d ranks in 1-100 (e.g. %s). Only %d distinct ranks found.",
+                "Ranking validation FAILED for %s: missing %d ranks in 1-600 (e.g. %s). Only %d distinct ranks found.",
                 rd,
                 len(missing),
                 sorted(missing)[:10],
                 len(ranks),
             )
         else:
-            logger.info("Ranking validation passed for %s: ranks 1-100 all present (%d total ranks)", rd, len(ranks))
+            logger.info("Ranking validation passed for %s: ranks 1-600 all present (%d total ranks)", rd, len(ranks))

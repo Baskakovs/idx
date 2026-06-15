@@ -53,10 +53,10 @@ class TestBuildRankingTable:
         entries = pl.DataFrame({"internal_key": ["K1"], "review_date": [rd], "rank": [5], "ff_mcap": [100.0]})
         membership = pl.DataFrame({"internal_key": ["K1"], "is_member": [True], "entry_reason": ["top_550"]})
         result = build_ranking_table.fn(assets, [entries], [membership], [rd])
-        # Day after review should also have rank 5
+        # Day after review should also have rank 1 (re-ranked from original 5)
         day_after = result.filter(pl.col("date") == date(2025, 6, 2))
         if not day_after.is_empty():
-            assert day_after["R1"][0] == 5
+            assert day_after["R1"][0] == 1
 
 
 class TestValidateRankingTable:
