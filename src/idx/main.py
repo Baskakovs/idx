@@ -10,7 +10,7 @@ from idx.download import download_selection_lists
 from idx.enrichment import report_unresolved_assets, resolve_yukka_ids
 from idx.extract import compute_membership, parse_selection_list
 from idx.ranking import build_ranking_table, validate_ranking_table
-from idx.storage import write_assets, write_ranks, write_review_details
+from idx.storage import write_assets, write_ranks, write_reviews
 
 
 async def main() -> None:
@@ -63,10 +63,11 @@ async def main() -> None:
     ranking_df = build_ranking_table(enriched_assets, entries_dfs, membership_dfs, sorted_dates)
     validate_ranking_table(ranking_df, sorted_dates)
 
-    # Persist to ClickHouse
+    # Persist to R2 as Parquet
     write_assets(enriched_assets)
-    write_ranks(ranking_df, enriched_assets)
-    write_review_details(entries_dfs, membership_dfs)
+    write_ranks(ranking_df)
+    for entries_df, membership_df, rd in zip(entries_dfs, membership_dfs, sorted_dates, strict=True):
+        write_reviews(entries_df, membership_df, rd)
 
 
 if __name__ == "__main__":

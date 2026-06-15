@@ -11,7 +11,7 @@ from idx.extract import Asset, SelectionListEntry
 
 
 @pytest.mark.asyncio
-@patch("idx.main.write_review_details")
+@patch("idx.main.write_reviews")
 @patch("idx.main.write_ranks")
 @patch("idx.main.write_assets")
 @patch("idx.main.validate_ranking_table")
@@ -43,7 +43,7 @@ async def test_main_empty_download(
 
 
 @pytest.mark.asyncio
-@patch("idx.main.write_review_details")
+@patch("idx.main.write_reviews")
 @patch("idx.main.write_ranks")
 @patch("idx.main.write_assets")
 @patch("idx.main.validate_ranking_table")
