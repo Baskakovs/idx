@@ -5,10 +5,6 @@ pull:
   - prefect.deployments.steps.git_clone:
       repository: https://github.com/Baskakovs/idx
       branch: add_readme
-  - prefect.deployments.steps.pip_install_requirements:
-      directory: "{{ pull_step.directory }}"
-      requirements_file: requirements.txt
-      stream_output: true
 
 deployments:
   - name: stoxx-600-scraper
@@ -20,6 +16,8 @@ deployments:
     parameters:
       periods: null  # Full historical range
     job_variables:
+      pip_packages:
+        - git+https://github.com/Baskakovs/idx.git@main
       env:
         R2_PREFIX: STOXX600
 
@@ -30,5 +28,7 @@ deployments:
     parameters:
       periods: [[2024, 9], [2024, 12], [2025, 3]]
     job_variables:
+      pip_packages:
+        - git+https://github.com/Baskakovs/idx.git@add_readme
       env:
         R2_PREFIX: STOXX600_dev
