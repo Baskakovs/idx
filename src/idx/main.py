@@ -51,6 +51,9 @@ async def main() -> None:
         membership_dfs.append(pl.DataFrame([asdict(m) for m in membership]))
         prior_membership = {m.internal_key for m in membership if m.is_member}
 
+    if not assets_dfs:
+        return
+
     # Merge, enrich, and report
     all_assets = pl.concat(assets_dfs).unique(subset=["internal_key"])
     enriched_assets = resolve_yukka_ids(all_assets)
