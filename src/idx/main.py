@@ -1,7 +1,11 @@
 """Download STOXX selection lists and compute index membership."""
 
 import asyncio
+import pdb
+from dataclasses import asdict
 from datetime import date
+
+import polars as pl
 
 from idx.download import download_selection_lists
 from idx.extract import compute_membership, parse_selection_list
@@ -26,14 +30,23 @@ async def main() -> None:
 
     sorted_dates = sorted(review_date_groups.keys())
 
+    # Static security identifiers (RIC, ISIN, SEDOL, country, currency)
+    assets_dfs: list[pl.DataFrame] = []
+    # Per-review snapshot: rank, free-float mcap, and comments for each security
+    entries_dfs: list[pl.DataFrame] = []
+    # Computed index membership per review: who is in/out and why (top 550, buffer, fill)
+    membership_dfs: list[pl.DataFrame] = []
+
     prior_membership: set[str] | None = None
     for rd in sorted_dates:
         assets, entries = review_date_groups[rd]
 
         membership = compute_membership(entries, prior_membership)
 
-        # TODO: write_parquet_dataset(assets, entries, membership, output_dir)
-
+        assets_dfs.append(pl.DataFrame([asdict(a) for a in assets]))
+        entries_dfs.append(pl.DataFrame([asdict(e) for e in entries]))
+        membership_dfs.append(pl.DataFrame([asdict(m) for m in membership]))
+        pdb.set_trace()
         prior_membership = {m.internal_key for m in membership if m.is_member}
 
 
