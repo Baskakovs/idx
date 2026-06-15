@@ -15,10 +15,11 @@ from prefect.cache_policies import NO_CACHE
 
 logger = logging.getLogger(__name__)
 
+load_dotenv()
+
 
 def _get_s3_client() -> boto3.client:
     """Create a boto3 S3 client configured for Cloudflare R2."""
-    load_dotenv()
     return boto3.client(
         "s3",
         endpoint_url=os.environ["ENDPOINT_URL"],
@@ -29,7 +30,7 @@ def _get_s3_client() -> boto3.client:
 
 
 R2_BUCKET = "idx-extract"
-R2_PREFIX = "STOXX600_dev"
+R2_PREFIX = os.environ.get("R2_PREFIX", "STOXX600_dev")
 
 
 def _upload_parquet(df: pl.DataFrame, key: str) -> None:

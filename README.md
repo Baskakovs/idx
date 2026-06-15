@@ -108,6 +108,7 @@ R2_SECRET_ACCESS_KEY=your-secret-access-key
 R2_ENDPOINT_URL=https://your-account-id.r2.cloudflarestorage.com
 R2_BUCKET=your-bucket-name
 R2_URL=https://your-public-r2-url.r2.dev
+R2_PREFIX=STOXX600_dev  # use STOXX600 for production
 
 # Yukka metadata API
 YUKKA_TOKEN=your-bearer-token
