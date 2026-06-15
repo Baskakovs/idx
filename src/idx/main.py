@@ -10,12 +10,13 @@ from idx.download import download_selection_lists
 from idx.enrichment import report_unresolved_assets, resolve_yukka_ids
 from idx.extract import compute_membership, parse_selection_list
 from idx.ranking import build_ranking_table, validate_ranking_table
+from idx.storage import write_assets, write_ranks, write_review_details
 
 
 async def main() -> None:
     """Download, parse, and process STOXX selection lists."""
-    # DEV: limit to a few periods for faster iteration
-    result = await download_selection_lists()
+    # DEV: limit to 3 periods for faster iteration
+    result = await download_selection_lists(periods=[(2024, 9), (2024, 12), (2025, 3)])
 
     # Parse all downloaded files and group by review_date
     review_date_groups: dict[date, tuple[list, list]] = {}
@@ -58,6 +59,11 @@ async def main() -> None:
     # Build and validate ranking table
     ranking_df = build_ranking_table(enriched_assets, entries_dfs, membership_dfs, sorted_dates)
     validate_ranking_table(ranking_df, sorted_dates)
+
+    # Persist to ClickHouse
+    write_assets(enriched_assets)
+    write_ranks(ranking_df, enriched_assets)
+    write_review_details(entries_dfs, membership_dfs)
 
 
 if __name__ == "__main__":
