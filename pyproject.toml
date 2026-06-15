@@ -24,7 +24,7 @@ classifiers = [
     "License :: OSI Approved :: MIT License",
     "Intended Audience :: Developers",
 ]
-dependencies = ["httpx", "prefect"]
+dependencies = ["httpx", "prefect", "polars", "pdfplumber"]
 
 [project.urls]
 Homepage = "https://github.com/your-org/idx"
