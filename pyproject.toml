@@ -45,3 +45,6 @@ lint = [
     "ruff>=0.11.0",
 ]
 dev = []
+
+[tool.deptry.package_module_name_map]
+python-dotenv = "dotenv"
