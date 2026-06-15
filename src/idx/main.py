@@ -1,13 +1,13 @@
 """Download STOXX selection lists and compute index membership."""
 
 import asyncio
-import pdb
 from dataclasses import asdict
 from datetime import date
 
 import polars as pl
 
 from idx.download import download_selection_lists
+from idx.enrichment import report_unresolved_assets, resolve_yukka_ids
 from idx.extract import compute_membership, parse_selection_list
 
 
@@ -46,8 +46,12 @@ async def main() -> None:
         assets_dfs.append(pl.DataFrame([asdict(a) for a in assets]))
         entries_dfs.append(pl.DataFrame([asdict(e) for e in entries]))
         membership_dfs.append(pl.DataFrame([asdict(m) for m in membership]))
-        pdb.set_trace()
         prior_membership = {m.internal_key for m in membership if m.is_member}
+
+    # Merge, enrich, and report
+    all_assets = pl.concat(assets_dfs).unique(subset=["internal_key"])
+    enriched_assets = resolve_yukka_ids(all_assets)
+    report_unresolved_assets(enriched_assets)
 
 
 if __name__ == "__main__":
