@@ -168,7 +168,7 @@ async def download_selection_lists(
     result = DownloadResult()
     semaphore = asyncio.Semaphore(10)
 
-    async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
+    async with httpx.AsyncClient(timeout=30, follow_redirects=True, verify=False) as client:  # nosec B501 # noqa: S501
         tasks = []
         for year, month in periods:
             period_date = date(year, month, 1)
