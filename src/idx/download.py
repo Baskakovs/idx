@@ -186,7 +186,10 @@ async def download_selection_lists(
             result.missed.append((year, month))
 
     logger.info("Downloaded %d files, missed %d periods", len(result.downloaded), len(result.missed))
+    for filepath in result.downloaded:
+        logger.info("Downloaded: %s", filepath.name)
     if result.missed:
-        logger.warning("Missed periods: %s", result.missed)
+        for year, month in result.missed:
+            logger.warning("Failed to download: %d-%02d", year, month)
 
     return result

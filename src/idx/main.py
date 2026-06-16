@@ -30,18 +30,29 @@ async def main(
     """
     result = await download_selection_lists(periods=periods)
 
+    if not result.downloaded:
+        logger.warning("No files downloaded — nothing to process")
+        return
+
     # Parse all downloaded files and group by review_date
     review_date_groups: dict[date, tuple[list, list]] = {}
+    parse_failures: list[str] = []
     for filepath in result.downloaded:
         assets, entries = parse_selection_list(filepath)
         if entries:
             rd = entries[0].review_date
+            logger.info(
+                "Parsed %s → review date %s (%d assets, %d entries)", filepath.name, rd, len(assets), len(entries)
+            )
             if rd in review_date_groups:
                 existing_assets, existing_entries = review_date_groups[rd]
                 existing_assets.extend(assets)
                 existing_entries.extend(entries)
             else:
                 review_date_groups[rd] = (assets, entries)
+        else:
+            logger.warning("No entries parsed from %s", filepath.name)
+            parse_failures.append(filepath.name)
 
     sorted_dates = sorted(review_date_groups.keys())
 
@@ -65,6 +76,7 @@ async def main(
         logger.info("Processed review date %s", rd)
 
     if not assets_dfs:
+        logger.warning("No review dates parsed — nothing to process")
         return
 
     # Merge, enrich, and report
@@ -84,11 +96,52 @@ async def main(
     for entries_df, membership_df, rd in zip(entries_dfs, membership_dfs, sorted_dates, strict=True):
         write_reviews(entries_df, membership_df, rd)
 
+    # Build detailed summary
+    review_lines = []
+    for entries_df, membership_df, rd in zip(entries_dfs, membership_dfs, sorted_dates, strict=True):
+        members = membership_df.filter(pl.col("is_member"))
+        review_lines.append(f"| {rd} | {len(entries_df)} | {len(members)} |")
+
+    downloaded_lines = [f"| `{p.name}` |" for p in result.downloaded]
+    missed_lines = [f"| {y}-{m:02d} |" for y, m in result.missed]
+
+    summary_parts = [
+        "## Pipeline Summary\n",
+        f"**Downloaded:** {len(result.downloaded)} files, **Failed:** {len(result.missed)} periods\n",
+    ]
+    if parse_failures:
+        summary_parts.append(f"**Parse failures:** {', '.join(parse_failures)}\n")
+    summary_parts.extend(
+        [
+            f"**Total assets:** {len(enriched_assets)} ({unique_isins} unique ISINs)\n",
+            f"**Rankings:** {len(ranking_df)} daily rows\n",
+            "\n### Downloads\n",
+            "| File |",
+            "|------|",
+            *downloaded_lines,
+        ]
+    )
+    if missed_lines:
+        summary_parts.extend(
+            [
+                "\n### Failed Periods\n",
+                "| Period |",
+                "|--------|",
+                *missed_lines,
+            ]
+        )
+    summary_parts.extend(
+        [
+            "\n### Reviews\n",
+            "| Review Date | Entries | Members |",
+            "|-------------|---------|---------|",
+            *review_lines,
+        ]
+    )
+
     await acreate_markdown_artifact(
         key="pipeline-summary",
-        markdown=f"**Reviews processed:** {len(sorted_dates)}\n\n"
-        f"**Assets:** {len(enriched_assets)} rows\n\n"
-        f"**Rankings:** {len(ranking_df)} daily rows",
+        markdown="\n".join(summary_parts),
         description="Pipeline run summary",
     )
 
