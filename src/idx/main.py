@@ -78,8 +78,16 @@ async def main(
         logger.warning("No review dates parsed — nothing to process")
         return
 
-    # Merge, enrich, and report
-    all_assets = pl.concat(assets_dfs).unique(subset=["internal_key"])
+    # Filter to assets that were ever index members
+    ever_member_keys = set()
+    for mdf in membership_dfs:
+        ever_member_keys.update(mdf.filter(pl.col("is_member"))["internal_key"].to_list())
+
+    all_assets = (
+        pl.concat(assets_dfs)
+        .unique(subset=["internal_key"])
+        .filter(pl.col("internal_key").is_in(list(ever_member_keys)))
+    )
     unique_isins = all_assets["isin"].n_unique() if "isin" in all_assets.columns else 0
     logger.info("Built %d asset rows (%d unique ISINs)", len(all_assets), unique_isins)
     enriched_assets = resolve_yukka_ids(all_assets)

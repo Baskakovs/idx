@@ -59,7 +59,7 @@ def write_ranks(ranking_df: pl.DataFrame) -> None:
     if ranking_df.is_empty():
         logger.warning("No ranking data to write")
         return
-    _upload_parquet(ranking_df, "rankings.parquet")
+    _upload_parquet(ranking_df, "ranking.parquet")
 
 
 @task(cache_policy=NO_CACHE)

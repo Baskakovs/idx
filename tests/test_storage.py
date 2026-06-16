@@ -83,7 +83,7 @@ class TestWriteRanks:
 
         mock_s3.put_object.assert_called_once()
         call_kwargs = mock_s3.put_object.call_args[1]
-        assert call_kwargs["Key"] == "STOXX600_dev/rankings.parquet"
+        assert call_kwargs["Key"] == "STOXX600_dev/ranking.parquet"
 
         result = pl.read_parquet(io.BytesIO(call_kwargs["Body"]))
         assert len(result) == 2
