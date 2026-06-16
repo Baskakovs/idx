@@ -132,6 +132,7 @@ class TestDownloadSelectionLists:
         """PDF period downloads a single file without day iteration."""
         url, _ = build_url(2022, 3, "sxxp")
         respx.get(url).mock(return_value=httpx.Response(200, content=b"pdf data"))
+        respx.route().mock(return_value=httpx.Response(200, content=b"{}"))
 
         result = await download_selection_lists(
             start=date(2022, 3, 1),

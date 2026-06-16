@@ -1,0 +1,30 @@
+name: idx
+prefect-version: 3.0.0
+
+pull:
+  - prefect.deployments.steps.git_clone:
+      repository: https://github.com/Baskakovs/idx
+      branch: add_readme
+
+deployments:
+  - name: stoxx-600-scraper
+    entrypoint: src/idx/main.py:main
+    work_pool:
+      name: idx
+    schedule:
+      cron: "0 16 * * *"  # Daily at 16:00 UTC (18:00 CET)
+    parameters:
+      periods: null  # Full historical range
+    job_variables:
+      env:
+        R2_PREFIX: STOXX600
+
+  - name: stoxx-600-scraper-dev
+    entrypoint: src/idx/main.py:main
+    work_pool:
+      name: idx
+    parameters:
+      periods: [[2024, 9], [2024, 12], [2025, 3]]
+    job_variables:
+      env:
+        R2_PREFIX: STOXX600_dev

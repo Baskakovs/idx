@@ -3,13 +3,12 @@
 from __future__ import annotations
 
 import logging
-import os
 
 import httpx
 import polars as pl
-from dotenv import load_dotenv
 from prefect import task
 from prefect.artifacts import create_table_artifact
+from prefect.blocks.system import Secret
 from prefect.cache_policies import NO_CACHE
 
 logger = logging.getLogger(__name__)
@@ -20,8 +19,7 @@ _BATCH_SIZE = 100
 
 def _build_client() -> httpx.Client:
     """Build an authenticated HTTP client for the Yukka metadata API."""
-    load_dotenv()
-    token = os.environ["YUKKA_TOKEN"]
+    token = Secret.load("yukka-token").get()
     return httpx.Client(
         base_url=_BASE_URL,
         headers={"Authorization": f"Bearer {token}"},
