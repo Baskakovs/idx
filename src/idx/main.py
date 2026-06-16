@@ -1,7 +1,6 @@
 """Download STOXX selection lists and compute index membership."""
 
 import asyncio
-import logging
 from dataclasses import asdict
 from datetime import date
 
@@ -9,13 +8,12 @@ import polars as pl
 from prefect import flow
 from prefect.artifacts import acreate_markdown_artifact
 
+from idx import get_logger
 from idx.download import download_selection_lists
 from idx.enrichment import report_unresolved_assets, resolve_yukka_ids
 from idx.extract import compute_membership, parse_selection_list
 from idx.ranking import build_ranking_table, validate_ranking_table
 from idx.storage import write_assets, write_ranks, write_reviews
-
-logger = logging.getLogger(__name__)
 
 
 @flow(name="stoxx-600-scraper", log_prints=True)
@@ -28,6 +26,7 @@ async def main(
         periods: Explicit (year, month) tuples to download.
             When None, downloads the full historical range.
     """
+    logger = get_logger()
     result = await download_selection_lists(periods=periods)
 
     if not result.downloaded:

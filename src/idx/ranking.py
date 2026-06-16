@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-import logging
 from datetime import date
 
 import polars as pl
 from prefect import task
 from prefect.cache_policies import NO_CACHE
 
-logger = logging.getLogger(__name__)
+from idx import get_logger
 
 
 @task(cache_policy=NO_CACHE)
@@ -109,6 +108,7 @@ def validate_ranking_table(ranking_df: pl.DataFrame, review_dates: list[date]) -
         ranking_df: Wide-format ranking DataFrame (date column + RIC columns).
         review_dates: Review dates that should be validated.
     """
+    logger = get_logger()
     ric_cols = [c for c in ranking_df.columns if c != "date"]
 
     if not ric_cols or ranking_df.is_empty():
