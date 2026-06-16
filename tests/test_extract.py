@@ -6,6 +6,7 @@ from datetime import date
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import polars as pl
 import pytest
 
 from idx.extract import (
@@ -14,6 +15,7 @@ from idx.extract import (
     _normalize_column_name,
     _parse_pdf_date,
     compute_membership,
+    compute_membership_intervals,
     parse_selection_list,
     parse_selection_list_csv,
     parse_selection_list_pdf,
@@ -117,6 +119,80 @@ class TestComputeMembership:
         entries = _make_entries(100)
         result = compute_membership.fn(entries, prior_membership=None)
         assert len(result) == 100
+
+
+class TestComputeMembershipIntervals:
+    """Tests for contiguous membership interval computation."""
+
+    def test_single_continuous_span(self):
+        """Asset that is a member for all dates gets one interval."""
+        dates = [date(2024, 3, 1), date(2024, 6, 1), date(2024, 9, 1)]
+        membership_dfs = [
+            pl.DataFrame({"internal_key": ["A"], "is_member": [True], "entry_reason": ["top_550"]}),
+            pl.DataFrame({"internal_key": ["A"], "is_member": [True], "entry_reason": ["top_550"]}),
+            pl.DataFrame({"internal_key": ["A"], "is_member": [True], "entry_reason": ["top_550"]}),
+        ]
+        result = compute_membership_intervals(membership_dfs, dates)
+        assert len(result) == 1
+        assert result["first_included"][0] == date(2024, 3, 1)
+        assert result["last_included"][0] == date(2024, 9, 1)
+
+    def test_gap_produces_two_intervals(self):
+        """Asset that leaves and rejoins produces two intervals."""
+        dates = [date(2024, 3, 1), date(2024, 6, 1), date(2024, 9, 1), date(2024, 12, 1)]
+        membership_dfs = [
+            pl.DataFrame({"internal_key": ["A"], "is_member": [True], "entry_reason": ["top_550"]}),
+            pl.DataFrame({"internal_key": ["A"], "is_member": [False], "entry_reason": ["top_550"]}),
+            pl.DataFrame({"internal_key": ["A"], "is_member": [True], "entry_reason": ["top_550"]}),
+            pl.DataFrame({"internal_key": ["A"], "is_member": [True], "entry_reason": ["top_550"]}),
+        ]
+        result = compute_membership_intervals(membership_dfs, dates)
+        result = result.sort("first_included")
+        assert len(result) == 2
+        assert result["first_included"][0] == date(2024, 3, 1)
+        assert result["last_included"][0] == date(2024, 3, 1)
+        assert result["first_included"][1] == date(2024, 9, 1)
+        assert result["last_included"][1] == date(2024, 12, 1)
+
+    def test_non_member_excluded(self):
+        """Asset that is never a member produces no rows."""
+        dates = [date(2024, 3, 1), date(2024, 6, 1)]
+        membership_dfs = [
+            pl.DataFrame({"internal_key": ["A"], "is_member": [False], "entry_reason": ["top_550"]}),
+            pl.DataFrame({"internal_key": ["A"], "is_member": [False], "entry_reason": ["top_550"]}),
+        ]
+        result = compute_membership_intervals(membership_dfs, dates)
+        assert len(result) == 0
+
+    def test_multiple_assets(self):
+        """Multiple assets each get their own intervals."""
+        dates = [date(2024, 3, 1), date(2024, 6, 1)]
+        membership_dfs = [
+            pl.DataFrame(
+                {"internal_key": ["A", "B"], "is_member": [True, True], "entry_reason": ["top_550", "top_550"]}
+            ),
+            pl.DataFrame(
+                {"internal_key": ["A", "B"], "is_member": [True, False], "entry_reason": ["top_550", "top_550"]}
+            ),
+        ]
+        result = compute_membership_intervals(membership_dfs, dates)
+        assert len(result) == 2
+        a_rows = result.filter(pl.col("internal_key") == "A")
+        b_rows = result.filter(pl.col("internal_key") == "B")
+        assert a_rows["first_included"][0] == date(2024, 3, 1)
+        assert a_rows["last_included"][0] == date(2024, 6, 1)
+        assert b_rows["first_included"][0] == date(2024, 3, 1)
+        assert b_rows["last_included"][0] == date(2024, 3, 1)
+
+    def test_column_types_are_date(self):
+        """Output columns first_included and last_included are pl.Date."""
+        dates = [date(2024, 3, 1)]
+        membership_dfs = [
+            pl.DataFrame({"internal_key": ["A"], "is_member": [True], "entry_reason": ["top_550"]}),
+        ]
+        result = compute_membership_intervals(membership_dfs, dates)
+        assert result.schema["first_included"] == pl.Date
+        assert result.schema["last_included"] == pl.Date
 
 
 class TestParsePdfDate:
