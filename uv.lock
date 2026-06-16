@@ -924,7 +924,6 @@ dependencies = [
     { name = "pdfplumber" },
     { name = "polars" },
     { name = "prefect" },
-    { name = "python-dotenv" },
 ]
 
 [package.dev-dependencies]
@@ -946,7 +945,6 @@ requires-dist = [
     { name = "pdfplumber" },
     { name = "polars" },
     { name = "prefect" },
-    { name = "python-dotenv" },
 ]
 
 [package.metadata.requires-dev]

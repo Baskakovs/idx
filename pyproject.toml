@@ -24,7 +24,7 @@ classifiers = [
     "License :: OSI Approved :: MIT License",
     "Intended Audience :: Developers",
 ]
-dependencies = ["httpx", "prefect", "polars", "pdfplumber", "python-dotenv", "boto3"]
+dependencies = ["httpx", "prefect", "polars", "pdfplumber", "boto3"]
 
 [project.urls]
 Homepage = "https://github.com/your-org/idx"
