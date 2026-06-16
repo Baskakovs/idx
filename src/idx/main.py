@@ -1,6 +1,7 @@
 """Download STOXX selection lists and compute index membership."""
 
 import asyncio
+import logging
 from dataclasses import asdict
 from datetime import date
 
@@ -13,6 +14,8 @@ from idx.enrichment import report_unresolved_assets, resolve_yukka_ids
 from idx.extract import compute_membership, parse_selection_list
 from idx.ranking import build_ranking_table, validate_ranking_table
 from idx.storage import write_assets, write_ranks, write_reviews
+
+logger = logging.getLogger(__name__)
 
 
 @flow(name="stoxx-600-scraper", log_prints=True)
@@ -59,12 +62,15 @@ async def main(
         entries_dfs.append(pl.DataFrame([asdict(e) for e in entries], infer_schema_length=None))
         membership_dfs.append(pl.DataFrame([asdict(m) for m in membership]))
         prior_membership = {m.internal_key for m in membership if m.is_member}
+        logger.info("Processed review date %s", rd)
 
     if not assets_dfs:
         return
 
     # Merge, enrich, and report
     all_assets = pl.concat(assets_dfs).unique(subset=["internal_key"])
+    unique_isins = all_assets["isin"].n_unique() if "isin" in all_assets.columns else 0
+    logger.info("Built %d asset rows (%d unique ISINs)", len(all_assets), unique_isins)
     enriched_assets = resolve_yukka_ids(all_assets)
     report_unresolved_assets(enriched_assets)
 
