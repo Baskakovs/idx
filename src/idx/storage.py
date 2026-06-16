@@ -9,23 +9,21 @@ from datetime import date
 
 import boto3
 import polars as pl
-from dotenv import load_dotenv
 from prefect import task
+from prefect.blocks.system import Secret
 from prefect.cache_policies import NO_CACHE
 
 logger = logging.getLogger(__name__)
-
-load_dotenv()
 
 
 def _get_s3_client() -> boto3.client:
     """Create a boto3 S3 client configured for Cloudflare R2."""
     return boto3.client(
         "s3",
-        endpoint_url=os.environ["ENDPOINT_URL"],
-        aws_access_key_id=os.environ["AWS_ACCESS_KEY_ID"],
-        aws_secret_access_key=os.environ["AWS_SECRET_ACCESS_KEY"],
-        region_name=os.environ.get("REGION_NAME", "auto"),
+        endpoint_url=Secret.load("r2-endpoint-url").get(),
+        aws_access_key_id=Secret.load("r2-access-key-id").get(),
+        aws_secret_access_key=Secret.load("r2-secret-access-key").get(),
+        region_name="auto",
     )
 
 
