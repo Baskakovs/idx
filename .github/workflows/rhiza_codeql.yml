@@ -12,12 +12,6 @@
 # Trigger: On push to main/master, pull requests, and weekly schedule.
 
 name: "(RHIZA) CODEQL"
-
-# Cancel superseded in-progress runs of this workflow for the same ref.
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
-
 permissions:
   contents: read
 
