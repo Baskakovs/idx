@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import io
-import logging
 import os
 from datetime import date
 
@@ -13,7 +12,7 @@ from prefect import task
 from prefect.blocks.system import Secret
 from prefect.cache_policies import NO_CACHE
 
-logger = logging.getLogger(__name__)
+from idx import get_logger
 
 
 def _get_s3_client() -> boto3.client:
@@ -33,6 +32,7 @@ R2_PREFIX = os.environ.get("R2_PREFIX", "STOXX600_dev")
 
 def _upload_parquet(df: pl.DataFrame, key: str) -> None:
     """Write a DataFrame as Parquet and upload to R2."""
+    logger = get_logger()
     full_key = f"{R2_PREFIX}/{key}"
     buf = io.BytesIO()
     df.write_parquet(buf)
@@ -45,6 +45,7 @@ def _upload_parquet(df: pl.DataFrame, key: str) -> None:
 @task(cache_policy=NO_CACHE)
 def write_assets(enriched_assets: pl.DataFrame) -> None:
     """Write enriched assets to assets.parquet in R2."""
+    logger = get_logger()
     if enriched_assets.is_empty():
         logger.warning("No assets to write")
         return
@@ -54,6 +55,7 @@ def write_assets(enriched_assets: pl.DataFrame) -> None:
 @task(cache_policy=NO_CACHE)
 def write_ranks(ranking_df: pl.DataFrame) -> None:
     """Write wide-format ranking table to rankings.parquet in R2."""
+    logger = get_logger()
     if ranking_df.is_empty():
         logger.warning("No ranking data to write")
         return
@@ -63,6 +65,7 @@ def write_ranks(ranking_df: pl.DataFrame) -> None:
 @task(cache_policy=NO_CACHE)
 def write_reviews(entries_df: pl.DataFrame, membership_df: pl.DataFrame, review_date: date) -> None:
     """Join entries with membership and write to reviews/{review_date}.parquet in R2."""
+    logger = get_logger()
     members = membership_df.filter(pl.col("is_member")).select("internal_key", "entry_reason")
     joined = entries_df.join(members, on="internal_key", how="left")
     if joined.is_empty():

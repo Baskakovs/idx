@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import enum
-import logging
 import re
 from dataclasses import dataclass
 from datetime import date
@@ -13,7 +12,7 @@ import pdfplumber
 import polars as pl
 from prefect import task
 
-logger = logging.getLogger(__name__)
+from idx import get_logger
 
 
 @dataclass(frozen=True)
@@ -237,6 +236,7 @@ def parse_selection_list(
     Returns:
         A tuple of (assets, entries) where assets has one per unique internal_key.
     """
+    logger = get_logger()
     file_type = filepath.suffix.lower().lstrip(".")
     if file_type == "pdf":
         assets, entries = parse_selection_list_pdf(filepath)
@@ -268,6 +268,7 @@ def compute_membership(
     ranked = [e for e in entries if e.rank is not None]
     ranked.sort(key=lambda e: (e.rank, e.internal_key))
 
+    logger = get_logger()
     if prior_membership is None:
         logger.warning("Bootstrap mode: no prior membership provided, taking top 600 by FF Mcap")
         return [

@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import logging
-
 import httpx
 import polars as pl
 from prefect import task
@@ -11,7 +9,7 @@ from prefect.artifacts import create_table_artifact
 from prefect.blocks.system import Secret
 from prefect.cache_policies import NO_CACHE
 
-logger = logging.getLogger(__name__)
+from idx import get_logger
 
 _BASE_URL = "https://metadata.api.yukkalab.com"
 _BATCH_SIZE = 100
@@ -61,6 +59,7 @@ def resolve_yukka_ids(assets_df: pl.DataFrame) -> pl.DataFrame:
     Returns:
         DataFrame with an added 'yukka_id' column (nullable string).
     """
+    logger = get_logger()
     has_isin = "isin" in assets_df.columns
     if has_isin:
         isin_df = assets_df.filter(pl.col("isin").is_not_null())
@@ -130,6 +129,7 @@ def report_unresolved_assets(assets_df: pl.DataFrame) -> None:
     Args:
         assets_df: Enriched assets DataFrame with a 'yukka_id' column.
     """
+    logger = get_logger()
     if "yukka_id" not in assets_df.columns:
         logger.warning("No yukka_id column, skipping artifact")
         return
