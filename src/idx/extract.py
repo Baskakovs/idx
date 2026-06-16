@@ -249,6 +249,66 @@ def parse_selection_list(
     return assets, entries
 
 
+def compute_membership_intervals(
+    membership_dfs: list[pl.DataFrame],
+    sorted_dates: list[date],
+) -> pl.DataFrame:
+    """Compute contiguous membership intervals for each asset.
+
+    For each asset, groups consecutive review dates where is_member is True
+    into contiguous spans, returning (first_included, last_included) pairs.
+
+    Args:
+        membership_dfs: One DataFrame per review date with columns
+            [internal_key, is_member, entry_reason].
+        sorted_dates: Review dates in chronological order, aligned with membership_dfs.
+
+    Returns:
+        DataFrame with columns [internal_key, first_included, last_included],
+        one row per (asset, contiguous membership interval).
+    """
+    # Build a mapping from each asset to the set of date indices where it was a member
+    asset_member_indices: dict[str, list[int]] = {}
+    for i, mdf in enumerate(membership_dfs):
+        member_keys = mdf.filter(pl.col("is_member"))["internal_key"].to_list()
+        for key in member_keys:
+            asset_member_indices.setdefault(key, []).append(i)
+
+    rows: list[dict] = []
+    for key, indices in asset_member_indices.items():
+        indices.sort()
+        # Group consecutive indices into spans
+        span_start = indices[0]
+        prev = indices[0]
+        for idx in indices[1:]:
+            if idx != prev + 1:
+                rows.append(
+                    {
+                        "internal_key": key,
+                        "first_included": sorted_dates[span_start],
+                        "last_included": sorted_dates[prev],
+                    }
+                )
+                span_start = idx
+            prev = idx
+        rows.append(
+            {
+                "internal_key": key,
+                "first_included": sorted_dates[span_start],
+                "last_included": sorted_dates[prev],
+            }
+        )
+
+    return pl.DataFrame(
+        rows,
+        schema={
+            "internal_key": pl.Utf8,
+            "first_included": pl.Date,
+            "last_included": pl.Date,
+        },
+    )
+
+
 @task
 def compute_membership(
     entries: list[SelectionListEntry],
