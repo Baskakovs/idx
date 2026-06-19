@@ -12,12 +12,6 @@
 # Trigger: Weekly schedule (Monday 08:00 UTC) and manual dispatch.
 
 name: "(RHIZA) WEEKLY"
-
-# Cancel superseded in-progress runs of this workflow for the same ref.
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
-
 permissions:
   contents: read
 

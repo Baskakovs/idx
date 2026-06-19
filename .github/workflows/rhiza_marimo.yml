@@ -16,12 +16,6 @@
 #   - ✅ Fail-fast disabled to report all failing notebooks
 
 name: "(RHIZA) MARIMO"
-
-# Cancel superseded in-progress runs of this workflow for the same ref.
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
-
 permissions:
   contents: read
 
