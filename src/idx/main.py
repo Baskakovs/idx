@@ -3,6 +3,7 @@
 import asyncio
 from dataclasses import asdict
 from datetime import date
+from typing import Any
 
 import polars as pl
 from prefect import flow
@@ -35,7 +36,7 @@ async def main(
             return
 
         # Parse all downloaded files and group by review_date
-        review_date_groups: dict[date, tuple[list, list]] = {}
+        review_date_groups: dict[date, tuple[list[Any], list[Any]]] = {}
         for filepath in result.downloaded:
             assets, entries = parse_selection_list(filepath)
             if entries:
@@ -98,7 +99,7 @@ async def main(
         for entries_df, membership_df, rd in zip(entries_dfs, membership_dfs, sorted_dates, strict=True):
             write_reviews(entries_df, membership_df, rd)
     except Exception as e:
-        slack = await SlackWebhook.load("yukka-notification")
+        slack = await SlackWebhook.load("yukka-notification")  # ty: ignore[invalid-await]
         await slack.notify(f"STOXX 600 scraper failed: {e}")
         raise
 

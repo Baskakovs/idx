@@ -48,3 +48,4 @@ dev = []
 
 [tool.deptry.package_module_name_map]
 python-dotenv = "dotenv"
+prefect-slack = "prefect"

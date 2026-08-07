@@ -37,7 +37,7 @@ async def test_main_empty_download(
     from idx.main import main
 
     mock_download.return_value = MagicMock(downloaded=[])
-    await main()
+    await main.fn()
     mock_download.assert_called_once()
     mock_parse.assert_not_called()
 
@@ -98,7 +98,7 @@ async def test_main_full_pipeline(
     ranking = pl.DataFrame({"date": [rd], "R1": [1]})
     mock_build.return_value = ranking
 
-    await main()
+    await main.fn()
 
     mock_resolve.assert_called_once()
     mock_report.assert_called_once()

@@ -5,8 +5,9 @@ from __future__ import annotations
 import io
 import os
 from datetime import date
+from typing import Any
 
-import boto3
+import boto3  # type: ignore[import-untyped]
 import polars as pl
 from prefect import task
 from prefect.blocks.system import Secret
@@ -15,13 +16,13 @@ from prefect.cache_policies import NO_CACHE
 from idx import get_logger
 
 
-def _get_s3_client() -> boto3.client:
+def _get_s3_client() -> Any:
     """Create a boto3 S3 client configured for Cloudflare R2."""
     return boto3.client(
         "s3",
-        endpoint_url=Secret.load("r2-endpoint-url").get(),
-        aws_access_key_id=Secret.load("r2-access-key-id").get(),
-        aws_secret_access_key=Secret.load("r2-secret-access-key").get(),
+        endpoint_url=Secret.load("r2-endpoint-url").get(),  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
+        aws_access_key_id=Secret.load("r2-access-key-id").get(),  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
+        aws_secret_access_key=Secret.load("r2-secret-access-key").get(),  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
         region_name="auto",
     )
 
