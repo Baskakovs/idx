@@ -1186,12 +1186,12 @@ test = [
 
 [package.metadata]
 requires-dist = [
-    { name = "boto3" },
-    { name = "httpx" },
-    { name = "pdfplumber" },
-    { name = "polars" },
-    { name = "prefect" },
-    { name = "prefect-slack" },
+    { name = "boto3", specifier = ">=1.34" },
+    { name = "httpx", specifier = ">=0.27" },
+    { name = "pdfplumber", specifier = ">=0.10" },
+    { name = "polars", specifier = ">=1.0" },
+    { name = "prefect", specifier = ">=3.0" },
+    { name = "prefect-slack", specifier = ">=0.3" },
 ]
 
 [package.metadata.requires-dev]

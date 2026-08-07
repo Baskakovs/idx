@@ -11,6 +11,7 @@ from idx.extract import Asset, SelectionListEntry
 
 
 @pytest.mark.asyncio
+@patch("idx.main.SlackWebhook")
 @patch("idx.main.write_reviews")
 @patch("idx.main.write_ranks")
 @patch("idx.main.write_assets")
@@ -32,6 +33,7 @@ async def test_main_empty_download(
     mock_write_assets,
     mock_write_ranks,
     mock_write_details,
+    mock_slack,
 ):
     """Pipeline handles empty download result without errors."""
     from idx.main import main
@@ -43,6 +45,7 @@ async def test_main_empty_download(
 
 
 @pytest.mark.asyncio
+@patch("idx.main.SlackWebhook")
 @patch("idx.main.write_reviews")
 @patch("idx.main.write_ranks")
 @patch("idx.main.write_assets")
@@ -60,6 +63,7 @@ async def test_main_full_pipeline(
     mock_write_assets,
     mock_write_ranks,
     mock_write_details,
+    mock_slack,
 ):
     """Pipeline processes downloaded files through all stages."""
     from idx.main import main
