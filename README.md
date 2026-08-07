@@ -128,6 +128,10 @@ python -m idx.main
 
 The pipeline is orchestrated with [Prefect](https://www.prefect.io/). Each stage is a Prefect task, so runs are tracked and observable in the Prefect UI.
 
+### Failure notifications
+
+On any unhandled exception, the flow sends a Slack notification via the `yukka-notification` [Prefect SlackWebhook block](https://docs.prefect.io/integrations/prefect-slack) before re-raising, so the run still shows as **Failed** in Prefect. This requires the `prefect-slack` package and a pre-configured `yukka-notification` block in your Prefect workspace.
+
 ## Development
 
 ### Testing

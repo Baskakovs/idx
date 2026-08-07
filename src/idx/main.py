@@ -3,9 +3,11 @@
 import asyncio
 from dataclasses import asdict
 from datetime import date
+from typing import Any
 
 import polars as pl
 from prefect import flow
+from prefect.blocks.notifications import SlackWebhook
 
 from idx import get_logger
 from idx.download import download_selection_lists
@@ -26,73 +28,80 @@ async def main(
             When None, downloads the full historical range.
     """
     logger = get_logger()
-    result = await download_selection_lists(periods=periods)
+    try:
+        result = await download_selection_lists(periods=periods)
 
-    if not result.downloaded:
-        logger.warning("No files downloaded — nothing to process")
-        return
+        if not result.downloaded:
+            logger.warning("No files downloaded — nothing to process")
+            return
 
-    # Parse all downloaded files and group by review_date
-    review_date_groups: dict[date, tuple[list, list]] = {}
-    for filepath in result.downloaded:
-        assets, entries = parse_selection_list(filepath)
-        if entries:
-            rd = entries[0].review_date
-            logger.info(
-                "Parsed %s → review date %s (%d assets, %d entries)", filepath.name, rd, len(assets), len(entries)
-            )
-            if rd in review_date_groups:
-                existing_assets, existing_entries = review_date_groups[rd]
-                existing_assets.extend(assets)
-                existing_entries.extend(entries)
+        # Parse all downloaded files and group by review_date
+        review_date_groups: dict[date, tuple[list[Any], list[Any]]] = {}
+        for filepath in result.downloaded:
+            assets, entries = parse_selection_list(filepath)
+            if entries:
+                rd = entries[0].review_date
+                logger.info(
+                    "Parsed %s → review date %s (%d assets, %d entries)", filepath.name, rd, len(assets), len(entries)
+                )
+                if rd in review_date_groups:
+                    existing_assets, existing_entries = review_date_groups[rd]
+                    existing_assets.extend(assets)
+                    existing_entries.extend(entries)
+                else:
+                    review_date_groups[rd] = (assets, entries)
             else:
-                review_date_groups[rd] = (assets, entries)
-        else:
-            logger.warning("No entries parsed from %s", filepath.name)
+                logger.warning("No entries parsed from %s", filepath.name)
 
-    sorted_dates = sorted(review_date_groups.keys())
+        sorted_dates = sorted(review_date_groups.keys())
 
-    # Static security identifiers (RIC, ISIN, SEDOL, country, currency)
-    assets_dfs: list[pl.DataFrame] = []
-    # Per-review snapshot: rank, free-float mcap, and comments for each security
-    entries_dfs: list[pl.DataFrame] = []
-    # Computed index membership per review: who is in/out and why (top 550, buffer, fill)
-    membership_dfs: list[pl.DataFrame] = []
+        # Static security identifiers (RIC, ISIN, SEDOL, country, currency)
+        assets_dfs: list[pl.DataFrame] = []
+        # Per-review snapshot: rank, free-float mcap, and comments for each security
+        entries_dfs: list[pl.DataFrame] = []
+        # Computed index membership per review: who is in/out and why (top 550, buffer, fill)
+        membership_dfs: list[pl.DataFrame] = []
 
-    prior_membership: set[str] | None = None
-    for rd in sorted_dates:
-        assets, entries = review_date_groups[rd]
+        prior_membership: set[str] | None = None
+        for rd in sorted_dates:
+            assets, entries = review_date_groups[rd]
 
-        membership = compute_membership(entries, prior_membership)
+            membership = compute_membership(entries, prior_membership)
 
-        assets_dfs.append(pl.DataFrame([asdict(a) for a in assets]))
-        entries_dfs.append(pl.DataFrame([asdict(e) for e in entries], infer_schema_length=None))
-        membership_dfs.append(pl.DataFrame([asdict(m) for m in membership]))
-        prior_membership = {m.internal_key for m in membership if m.is_member}
-        logger.info("Processed review date %s", rd)
+            assets_dfs.append(pl.DataFrame([asdict(a) for a in assets]))
+            entries_dfs.append(pl.DataFrame([asdict(e) for e in entries], infer_schema_length=None))
+            membership_dfs.append(pl.DataFrame([asdict(m) for m in membership]))
+            prior_membership = {m.internal_key for m in membership if m.is_member}
+            logger.info("Processed review date %s", rd)
 
-    if not assets_dfs:
-        logger.warning("No review dates parsed — nothing to process")
-        return
+        if not assets_dfs:
+            logger.warning("No review dates parsed — nothing to process")
+            return
 
-    # Compute contiguous membership intervals and join onto assets
-    intervals = compute_membership_intervals(membership_dfs, sorted_dates)
+        # Compute contiguous membership intervals and join onto assets
+        intervals = compute_membership_intervals(membership_dfs, sorted_dates)
 
-    all_assets = pl.concat(assets_dfs).unique(subset=["internal_key"]).join(intervals, on="internal_key", how="inner")
-    unique_isins = all_assets["isin"].n_unique() if "isin" in all_assets.columns else 0
-    logger.info("Built %d asset rows (%d unique ISINs)", len(all_assets), unique_isins)
-    enriched_assets = resolve_yukka_ids(all_assets)
-    report_unresolved_assets(enriched_assets)
+        all_assets = (
+            pl.concat(assets_dfs).unique(subset=["internal_key"]).join(intervals, on="internal_key", how="inner")
+        )
+        unique_isins = all_assets["isin"].n_unique() if "isin" in all_assets.columns else 0
+        logger.info("Built %d asset rows (%d unique ISINs)", len(all_assets), unique_isins)
+        enriched_assets = resolve_yukka_ids(all_assets)
+        report_unresolved_assets(enriched_assets)
 
-    # Build and validate ranking table
-    ranking_df = build_ranking_table(enriched_assets, entries_dfs, membership_dfs, sorted_dates)
-    validate_ranking_table(ranking_df, sorted_dates)
+        # Build and validate ranking table
+        ranking_df = build_ranking_table(enriched_assets, entries_dfs, membership_dfs, sorted_dates)
+        validate_ranking_table(ranking_df, sorted_dates)
 
-    # Persist to R2 as Parquet
-    write_assets(enriched_assets)
-    write_ranks(ranking_df)
-    for entries_df, membership_df, rd in zip(entries_dfs, membership_dfs, sorted_dates, strict=True):
-        write_reviews(entries_df, membership_df, rd)
+        # Persist to R2 as Parquet
+        write_assets(enriched_assets)
+        write_ranks(ranking_df)
+        for entries_df, membership_df, rd in zip(entries_dfs, membership_dfs, sorted_dates, strict=True):
+            write_reviews(entries_df, membership_df, rd)
+    except Exception as e:
+        slack = await SlackWebhook.load("yukka-notification")  # ty: ignore[invalid-await]
+        await slack.notify(f"STOXX 600 scraper failed: {e}")
+        raise
 
 
 if __name__ == "__main__":

@@ -132,9 +132,9 @@ class TestDownloadSelectionLists:
         """PDF period downloads a single file without day iteration."""
         url, _ = build_url(2022, 3, "sxxp")
         respx.get(url).mock(return_value=httpx.Response(200, content=b"pdf data"))
-        respx.route().mock(return_value=httpx.Response(200, content=b"{}"))
+        respx.route().mock(return_value=httpx.Response(404))
 
-        result = await download_selection_lists(
+        result = await download_selection_lists.fn(
             start=date(2022, 3, 1),
             end=date(2022, 3, 31),
             output_dir=tmp_path,
@@ -151,7 +151,7 @@ class TestDownloadSelectionLists:
         """When end is not provided, it defaults to today."""
         # Use a far-future start so no periods are generated
         respx.route().mock(return_value=httpx.Response(404))
-        result = await download_selection_lists(
+        result = await download_selection_lists.fn(
             start=date(2099, 1, 1),
             output_dir=tmp_path,
             symbol="sxxp",
@@ -175,7 +175,7 @@ class TestDownloadSelectionLists:
         # Mock remaining days to 404 (won't be reached but respx needs them unmatched to be ok)
         respx.route().mock(return_value=httpx.Response(404))
 
-        result = await download_selection_lists(
+        result = await download_selection_lists.fn(
             start=date(2023, 12, 1),
             end=date(2023, 12, 31),
             output_dir=tmp_path,
@@ -197,7 +197,7 @@ class TestDownloadSelectionLists:
         respx.get(url_apr2).mock(return_value=httpx.Response(200, content=b"csv found"))
         respx.route().mock(return_value=httpx.Response(404))
 
-        result = await download_selection_lists(
+        result = await download_selection_lists.fn(
             start=date(2024, 3, 1),
             end=date(2024, 3, 31),
             output_dir=tmp_path,
@@ -215,7 +215,7 @@ class TestDownloadSelectionLists:
         # All return 404 -> period is missed
         respx.route().mock(return_value=httpx.Response(404))
 
-        result = await download_selection_lists(
+        result = await download_selection_lists.fn(
             start=date(2024, 3, 1),
             end=date(2024, 3, 31),
             output_dir=tmp_path,

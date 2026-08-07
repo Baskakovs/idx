@@ -6,7 +6,7 @@ from prefect.exceptions import MissingContextError
 from prefect.logging import get_run_logger
 
 
-def get_logger(name: str = __name__) -> logging.Logger:
+def get_logger(name: str = __name__) -> logging.Logger | logging.LoggerAdapter[logging.Logger]:
     """Get a Prefect run logger if inside a flow/task, otherwise a standard logger."""
     try:
         return get_run_logger()

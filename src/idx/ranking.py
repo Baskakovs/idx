@@ -42,7 +42,7 @@ def build_ranking_table(
             key_to_ric[row[0]] = row[1]
 
     all_known_rics: set[str] = set()
-    long_rows: list[dict] = []
+    long_rows: list[dict[str, object]] = []
 
     for rd, entries_df, membership_df in zip(review_dates, entries_dfs, membership_dfs, strict=True):
         # Join RIC from assets if entries lack a ric column
@@ -59,13 +59,13 @@ def build_ranking_table(
 
         # Build ric->rank for members, deduplicate
         ric_rank: dict[str, int] = {}
-        for row in entries_df.iter_rows(named=True):
-            ric = row["ric"]
+        for entry_row in entries_df.iter_rows(named=True):
+            ric = entry_row["ric"]
             if ric in ric_rank:
                 continue
             all_known_rics.add(ric)
-            if row["internal_key"] in member_keys:
-                ric_rank[ric] = row["rank"]
+            if entry_row["internal_key"] in member_keys:
+                ric_rank[ric] = entry_row["rank"]
 
         # Re-rank members 1-600 by original rank order
         sorted_rics = sorted(ric_rank.items(), key=lambda x: x[1])
@@ -85,7 +85,7 @@ def build_ranking_table(
     wide_df = long_df.pivot(on="ric", index="date", values="rank")
 
     # Expand to daily date range
-    min_date: date = wide_df["date"].min()  # type: ignore[assignment]
+    min_date: date = wide_df["date"].min()  # type: ignore[assignment]  # ty: ignore[invalid-assignment]
     max_date = date.today()
     daily_dates = pl.DataFrame({"date": pl.date_range(min_date, max_date, eager=True)})
 

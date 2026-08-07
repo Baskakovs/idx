@@ -120,3 +120,4 @@ local.mk
 
 .bandit-baseline.json
 
+cache/

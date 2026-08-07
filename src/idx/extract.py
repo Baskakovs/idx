@@ -173,9 +173,9 @@ def parse_selection_list_pdf(filepath: Path) -> tuple[list[Asset], list[Selectio
             data = table[1:]
         else:
             data = table
-        for row in data:
-            if len(row) == len(headers):
-                all_rows.append(dict(zip(headers, row, strict=True)))
+        for row_cells in data:
+            if len(row_cells) == len(headers):
+                all_rows.append(dict(zip(headers, row_cells, strict=True)))  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
 
     # Build assets: one per unique internal_key
     seen_keys: set[str] = set()
@@ -274,7 +274,7 @@ def compute_membership_intervals(
         for key in member_keys:
             asset_member_indices.setdefault(key, []).append(i)
 
-    rows: list[dict] = []
+    rows: list[dict[str, object]] = []
     for key, indices in asset_member_indices.items():
         indices.sort()
         # Group consecutive indices into spans
