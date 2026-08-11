@@ -82,7 +82,9 @@ async def main(
         intervals = compute_membership_intervals(membership_dfs, sorted_dates)
 
         all_assets = (
-            pl.concat(assets_dfs).unique(subset=["internal_key"]).join(intervals, on="internal_key", how="inner")
+            pl.concat(assets_dfs)
+            .unique(subset=["internal_key"], keep="last")
+            .join(intervals, on="internal_key", how="inner")
         )
         unique_isins = all_assets["isin"].n_unique() if "isin" in all_assets.columns else 0
         logger.info("Built %d asset rows (%d unique ISINs)", len(all_assets), unique_isins)
