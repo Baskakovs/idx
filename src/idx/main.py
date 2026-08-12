@@ -83,7 +83,7 @@ async def main(
 
         all_assets = (
             pl.concat(assets_dfs)
-            .unique(subset=["internal_key"], keep="last")
+            .unique(subset=["internal_key"], keep="first")
             .join(intervals, on="internal_key", how="inner")
         )
         unique_isins = all_assets["isin"].n_unique() if "isin" in all_assets.columns else 0
