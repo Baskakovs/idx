@@ -48,6 +48,43 @@ def _batch_lookup(client: httpx.Client, endpoint: str, identifiers: list[str]) -
     return result
 
 
+def _resolve_by_isin(client: httpx.Client, assets_df: pl.DataFrame) -> dict[str, str]:
+    """Resolve internal_key → yukka_id via ISIN lookup."""
+    logger = get_logger()
+    if "isin" not in assets_df.columns:
+        return {}
+    isins = assets_df.filter(pl.col("isin").is_not_null())["isin"].unique().to_list()
+    if not isins:
+        return {}
+    isin_to_yukka = _batch_lookup(client, "/v2/isin_to_entity", isins)
+    logger.info("ISIN lookup resolved %d / %d", len(isin_to_yukka), len(isins))
+
+    key_map: dict[str, str] = {}
+    for row in assets_df.filter(pl.col("isin").is_not_null()).select("internal_key", "isin").iter_rows(named=True):
+        if row["isin"] in isin_to_yukka and row["internal_key"] not in key_map:
+            key_map[row["internal_key"]] = isin_to_yukka[row["isin"]]
+    return key_map
+
+
+def _resolve_by_ric(client: httpx.Client, assets_df: pl.DataFrame, unresolved_keys: set[str]) -> dict[str, str]:
+    """Resolve internal_key → yukka_id via RIC fallback for unresolved keys."""
+    logger = get_logger()
+    if not unresolved_keys:
+        return {}
+    unresolved_df = assets_df.filter(pl.col("internal_key").is_in(list(unresolved_keys)))
+    rics = [r for r in unresolved_df["ric"].unique().drop_nulls().to_list() if r]
+    if not rics:
+        return {}
+    ric_to_yukka = _batch_lookup(client, "/ric_to_entity", rics)
+    logger.info("RIC lookup resolved %d / %d", len(ric_to_yukka), len(rics))
+
+    key_map: dict[str, str] = {}
+    for row in unresolved_df.select("internal_key", "ric").unique().iter_rows(named=True):
+        if row["ric"] in ric_to_yukka and row["internal_key"] not in key_map:
+            key_map[row["internal_key"]] = ric_to_yukka[row["ric"]]
+    return key_map
+
+
 @task(cache_policy=NO_CACHE)
 def resolve_yukka_ids(assets_df: pl.DataFrame) -> pl.DataFrame:
     """Enrich assets DataFrame with yukka_id column via ISIN and RIC lookups.
@@ -60,52 +97,16 @@ def resolve_yukka_ids(assets_df: pl.DataFrame) -> pl.DataFrame:
         DataFrame with an added 'yukka_id' column (nullable string).
     """
     logger = get_logger()
-    has_isin = "isin" in assets_df.columns
-    if has_isin:
-        isin_df = assets_df.filter(pl.col("isin").is_not_null())
-        isins = isin_df["isin"].unique().to_list()
-    else:
-        isins = []
-
-    logger.info("Resolving Yukka IDs for %d unique ISINs", len(isins))
-
     client = _build_client()
     try:
-        isin_to_yukka = _batch_lookup(client, "/v2/isin_to_entity", isins) if isins else {}
-        logger.info("ISIN lookup resolved %d / %d", len(isin_to_yukka), len(isins))
-
-        key_yukka_map: dict[str, str] = {}
-        if has_isin and isin_to_yukka:
-            for row in (
-                assets_df.filter(pl.col("isin").is_not_null()).select("internal_key", "isin").iter_rows(named=True)
-            ):
-                if row["isin"] in isin_to_yukka and row["internal_key"] not in key_yukka_map:
-                    key_yukka_map[row["internal_key"]] = isin_to_yukka[row["isin"]]
-
-        resolved_keys = set(key_yukka_map.keys())
+        key_yukka_map = _resolve_by_isin(client, assets_df)
         all_keys = set(assets_df["internal_key"].unique().to_list())
-        unresolved_keys = all_keys - resolved_keys
-        ric_to_yukka: dict[str, str] = {}
-        if unresolved_keys:
-            unresolved_df = assets_df.filter(pl.col("internal_key").is_in(list(unresolved_keys)))
-            rics = unresolved_df["ric"].unique().drop_nulls().to_list()
-            rics = [r for r in rics if r]
-            if rics:
-                ric_to_yukka = _batch_lookup(client, "/ric_to_entity", rics)
-                logger.info("RIC lookup resolved %d / %d", len(ric_to_yukka), len(rics))
+        unresolved_keys = all_keys - set(key_yukka_map.keys())
+        key_yukka_map.update(_resolve_by_ric(client, assets_df, unresolved_keys))
     finally:
         client.close()
 
-    if ric_to_yukka:
-        ric_key_df = (
-            assets_df.filter(pl.col("internal_key").is_in(list(unresolved_keys))).select("internal_key", "ric").unique()
-        )
-        for row in ric_key_df.iter_rows(named=True):
-            if row["ric"] in ric_to_yukka and row["internal_key"] not in key_yukka_map:
-                key_yukka_map[row["internal_key"]] = ric_to_yukka[row["ric"]]
-
-    resolved_count = len(key_yukka_map)
-    logger.info("Total resolved: %d / %d assets", resolved_count, len(all_keys))
+    logger.info("Total resolved: %d / %d assets", len(key_yukka_map), len(all_keys))
 
     if key_yukka_map:
         mapping_df = pl.DataFrame(

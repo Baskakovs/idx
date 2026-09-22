@@ -11,6 +11,54 @@ from prefect.cache_policies import NO_CACHE
 from idx import get_logger
 
 
+def _build_key_to_ric(assets_df: pl.DataFrame) -> dict[str, str]:
+    """Extract internal_key → RIC mapping from the assets DataFrame."""
+    if "ric" not in assets_df.columns or "internal_key" not in assets_df.columns:
+        return {}
+    return {row[0]: row[1] for row in assets_df.select(["internal_key", "ric"]).iter_rows()}
+
+
+def _compute_review_date_ranks(
+    entries_df: pl.DataFrame,
+    membership_df: pl.DataFrame,
+    key_to_ric: dict[str, str],
+    all_known_rics: set[str],
+) -> dict[str, int]:
+    """Compute RIC → re-ranked position for one review date."""
+    if "ric" not in entries_df.columns:
+        if not key_to_ric:
+            return {}
+        ric_series = entries_df["internal_key"].map_elements(lambda x: key_to_ric.get(x), return_dtype=pl.Utf8)
+        entries_df = entries_df.with_columns(ric_series.alias("ric"))
+
+    entries_df = entries_df.filter(pl.col("ric").is_not_null())
+    member_keys = set(membership_df.filter(pl.col("is_member"))["internal_key"].to_list())
+
+    ric_rank: dict[str, int] = {}
+    for entry_row in entries_df.iter_rows(named=True):
+        ric = entry_row["ric"]
+        if ric in ric_rank:
+            continue
+        all_known_rics.add(ric)
+        if entry_row["internal_key"] in member_keys:
+            ric_rank[ric] = entry_row["rank"]
+
+    sorted_rics = sorted(ric_rank.items(), key=lambda x: x[1])
+    return {ric: i + 1 for i, (ric, _) in enumerate(sorted_rics)}
+
+
+def _forward_fill_and_clean(wide_df: pl.DataFrame) -> pl.DataFrame:
+    """Expand to daily range, forward-fill, and replace sentinel 0 with null."""
+    min_date: date = wide_df["date"].min()  # type: ignore[assignment]  # ty: ignore[invalid-assignment]
+    max_date = date.today()
+    daily_dates = pl.DataFrame({"date": pl.date_range(min_date, max_date, eager=True)})
+
+    result = daily_dates.join(wide_df, on="date", how="left").sort("date")
+    ric_cols = [c for c in result.columns if c != "date"]
+    result = result.with_columns(pl.col(c).forward_fill() for c in ric_cols)
+    return result.with_columns(pl.when(pl.col(c) == 0).then(None).otherwise(pl.col(c)).alias(c) for c in ric_cols)
+
+
 @task(cache_policy=NO_CACHE)
 def build_ranking_table(
     assets_df: pl.DataFrame,
@@ -35,69 +83,21 @@ def build_ranking_table(
     if not review_dates:
         return pl.DataFrame({"date": []}).cast({"date": pl.Date})
 
-    # Build internal_key -> RIC lookup from assets
-    key_to_ric: dict[str, str] = {}
-    if "ric" in assets_df.columns and "internal_key" in assets_df.columns:
-        for row in assets_df.select(["internal_key", "ric"]).iter_rows():
-            key_to_ric[row[0]] = row[1]
-
+    key_to_ric = _build_key_to_ric(assets_df)
     all_known_rics: set[str] = set()
     long_rows: list[dict[str, object]] = []
 
     for rd, entries_df, membership_df in zip(review_dates, entries_dfs, membership_dfs, strict=True):
-        # Join RIC from assets if entries lack a ric column
-        if "ric" not in entries_df.columns:
-            if not key_to_ric:
-                continue
-            ric_series = entries_df["internal_key"].map_elements(lambda x: key_to_ric.get(x), return_dtype=pl.Utf8)
-            entries_df = entries_df.with_columns(ric_series.alias("ric"))
-
-        entries_df = entries_df.filter(pl.col("ric").is_not_null())
-
-        # Get member keys
-        member_keys = set(membership_df.filter(pl.col("is_member"))["internal_key"].to_list())
-
-        # Build ric->rank for members, deduplicate
-        ric_rank: dict[str, int] = {}
-        for entry_row in entries_df.iter_rows(named=True):
-            ric = entry_row["ric"]
-            if ric in ric_rank:
-                continue
-            all_known_rics.add(ric)
-            if entry_row["internal_key"] in member_keys:
-                ric_rank[ric] = entry_row["rank"]
-
-        # Re-rank members 1-600 by original rank order
-        sorted_rics = sorted(ric_rank.items(), key=lambda x: x[1])
-        ric_rank = {ric: i + 1 for i, (ric, _) in enumerate(sorted_rics)}
-
-        # Members get their rank; all other known RICs get 0 (sentinel for exit)
+        ric_rank = _compute_review_date_ranks(entries_df, membership_df, key_to_ric, all_known_rics)
         for ric in all_known_rics:
-            rank = ric_rank.get(ric, 0)
-            long_rows.append({"date": rd, "ric": ric, "rank": rank})
+            long_rows.append({"date": rd, "ric": ric, "rank": ric_rank.get(ric, 0)})
 
     if not long_rows:
         return pl.DataFrame({"date": []}).cast({"date": pl.Date})
 
     long_df = pl.DataFrame(long_rows).with_columns(pl.col("date").cast(pl.Date))
-
-    # Pivot to wide format: rows=date, columns=RIC, values=rank
     wide_df = long_df.pivot(on="ric", index="date", values="rank")
-
-    # Expand to daily date range
-    min_date: date = wide_df["date"].min()  # type: ignore[assignment]  # ty: ignore[invalid-assignment]
-    max_date = date.today()
-    daily_dates = pl.DataFrame({"date": pl.date_range(min_date, max_date, eager=True)})
-
-    # Join with daily range, sort, forward-fill
-    result = daily_dates.join(wide_df, on="date", how="left").sort("date")
-    ric_cols = [c for c in result.columns if c != "date"]
-    result = result.with_columns(pl.col(c).forward_fill() for c in ric_cols)
-
-    # Replace sentinel 0 with null
-    result = result.with_columns(pl.when(pl.col(c) == 0).then(None).otherwise(pl.col(c)).alias(c) for c in ric_cols)
-
-    return result
+    return _forward_fill_and_clean(wide_df)
 
 
 @task(cache_policy=NO_CACHE)
