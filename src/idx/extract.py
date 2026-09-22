@@ -95,9 +95,9 @@ def _asset_from_csv_row(row: dict[str, object]) -> Asset:
 def _entry_from_csv_row(row: dict[str, object], review_date: date) -> SelectionListEntry:
     """Build a SelectionListEntry from a normalised CSV row."""
     rank_val = row.get("rank_final")
-    rank = int(rank_val) if rank_val is not None and str(rank_val).strip() != "" else None
+    rank = int(str(rank_val)) if rank_val is not None and str(rank_val).strip() != "" else None
     ff_mcap_val = row.get("ff_mcap_meur")
-    ff_mcap = float(ff_mcap_val) if ff_mcap_val is not None and str(ff_mcap_val).strip() != "" else None
+    ff_mcap = float(str(ff_mcap_val)) if ff_mcap_val is not None and str(ff_mcap_val).strip() != "" else None
     return SelectionListEntry(
         internal_key=str(row["internal_key"]).strip(),
         review_date=review_date,
