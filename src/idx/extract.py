@@ -65,6 +65,48 @@ def _normalize_column_name(name: str) -> str:
     return re.sub(r"_+", "_", normalized).strip("_")
 
 
+def _clean_optional(val: object) -> str | None:
+    """Return a stripped string if non-empty, else None."""
+    if val is None:
+        return None
+    s = str(val).strip()
+    return s if s else None
+
+
+def _clean_isin(raw: str) -> str | None:
+    """Return a cleaned ISIN or None for null-like values."""
+    s = raw.strip()
+    return s if s and s.lower() not in ("", "null", "none") else None
+
+
+def _asset_from_csv_row(row: dict[str, object]) -> Asset:
+    """Build an Asset from a normalised CSV row."""
+    return Asset(
+        internal_key=str(row["internal_key"]).strip(),
+        ric=str(row["ric"]).strip(),
+        name=str(row["instrument_name"]).strip(),
+        country=str(row["country"]).strip(),
+        currency=str(row["currency"]).strip(),
+        isin=_clean_isin(str(row.get("isin", ""))),
+        sedol=_clean_optional(row.get("sedol")),
+    )
+
+
+def _entry_from_csv_row(row: dict[str, object], review_date: date) -> SelectionListEntry:
+    """Build a SelectionListEntry from a normalised CSV row."""
+    rank_val = row.get("rank_final")
+    rank = int(str(rank_val)) if rank_val is not None and str(rank_val).strip() != "" else None
+    ff_mcap_val = row.get("ff_mcap_meur")
+    ff_mcap = float(str(ff_mcap_val)) if ff_mcap_val is not None and str(ff_mcap_val).strip() != "" else None
+    return SelectionListEntry(
+        internal_key=str(row["internal_key"]).strip(),
+        review_date=review_date,
+        ff_mcap=ff_mcap,
+        rank=rank,
+        comment=_clean_optional(row.get("comment")),
+    )
+
+
 def parse_selection_list_csv(
     filepath: Path,
 ) -> tuple[list[Asset], list[SelectionListEntry]]:
@@ -79,54 +121,12 @@ def parse_selection_list_csv(
     df = pl.read_csv(filepath, separator=";", infer_schema_length=10000)
     df = df.rename({col: _normalize_column_name(col) for col in df.columns})
 
-    # Extract review_date from creation_date column (YYYYMMDD -> date)
     creation_date_str = str(df["creation_date"][0])
     review_date = date(int(creation_date_str[:4]), int(creation_date_str[4:6]), int(creation_date_str[6:8]))
 
-    # Build assets: one per unique internal_key
     asset_df = df.unique(subset=["internal_key"], keep="first")
-    assets = []
-    for row in asset_df.to_dicts():
-        sedol_val = row.get("sedol")
-        sedol = str(sedol_val).strip() if sedol_val is not None and str(sedol_val).strip() else None
-        internal_key = str(row["internal_key"]).strip()
-        raw_isin = str(row.get("isin", "")).strip()
-        isin = raw_isin if raw_isin and raw_isin.lower() not in ("", "null", "none") else None
-        assets.append(
-            Asset(
-                internal_key=internal_key,
-                ric=str(row["ric"]).strip(),
-                name=str(row["instrument_name"]).strip(),
-                country=str(row["country"]).strip(),
-                currency=str(row["currency"]).strip(),
-                isin=isin,
-                sedol=sedol,
-            )
-        )
-
-    # Build entries: one per row
-    entries = []
-    for row in df.to_dicts():
-        rank_val = row.get("rank_final")
-        rank = int(rank_val) if rank_val is not None and str(rank_val).strip() != "" else None
-
-        comment_val = row.get("comment")
-        comment = str(comment_val).strip() if comment_val is not None and str(comment_val).strip() else None
-
-        ff_mcap_val = row.get("ff_mcap_meur")
-        ff_mcap = float(ff_mcap_val) if ff_mcap_val is not None and str(ff_mcap_val).strip() != "" else None
-
-        internal_key = str(row["internal_key"]).strip()
-        entries.append(
-            SelectionListEntry(
-                internal_key=internal_key,
-                review_date=review_date,
-                ff_mcap=ff_mcap,
-                rank=rank,
-                comment=comment,
-            )
-        )
-
+    assets = [_asset_from_csv_row(row) for row in asset_df.to_dicts()]
+    entries = [_entry_from_csv_row(row, review_date) for row in df.to_dicts()]
     return assets, entries
 
 
@@ -146,22 +146,8 @@ def _parse_pdf_date(text_lines: list[str]) -> date:
     raise ValueError(msg)
 
 
-def parse_selection_list_pdf(filepath: Path) -> tuple[list[Asset], list[SelectionListEntry]]:
-    """Parse a STOXX selection list PDF into Assets and SelectionListEntries.
-
-    Args:
-        filepath: Path to a STOXX selection list PDF.
-
-    Returns:
-        A tuple of (assets, entries) where assets has one per unique ISIN.
-    """
-    pdf = pdfplumber.open(filepath)
-
-    # Extract review date from header text
-    header_text = pdf.pages[0].extract_text().split("\n")
-    review_date = _parse_pdf_date(header_text)
-
-    # Extract all rows across pages
+def _extract_pdf_rows(pdf: pdfplumber.PDF) -> list[dict[str, str]]:
+    """Extract all data rows from a multi-page PDF table."""
     all_rows: list[dict[str, str]] = []
     headers: list[str] = []
     for i, page in enumerate(pdf.pages):
@@ -176,8 +162,45 @@ def parse_selection_list_pdf(filepath: Path) -> tuple[list[Asset], list[Selectio
         for row_cells in data:
             if len(row_cells) == len(headers):
                 all_rows.append(dict(zip(headers, row_cells, strict=True)))  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
+    return all_rows
 
-    # Build assets: one per unique internal_key
+
+def _asset_from_pdf_row(row: dict[str, str]) -> Asset:
+    """Build an Asset from a normalised PDF row."""
+    return Asset(
+        internal_key=str(row.get("int_key", "")).strip(),
+        ric=str(row.get("ric", "")).strip(),
+        name=str(row.get("company_name", "")).strip(),
+        country=str(row.get("country", "")).strip(),
+        currency=str(row.get("currency", "")).strip(),
+        isin=_clean_optional(row.get("isin")),
+        sedol=_clean_optional(row.get("sedol")),
+    )
+
+
+def _entry_from_pdf_row(row: dict[str, str], internal_key: str, review_date: date) -> SelectionListEntry:
+    """Build a SelectionListEntry from a normalised PDF row."""
+    rank_val = row.get("rank_final")
+    rank = int(rank_val) if rank_val and str(rank_val).strip() else None
+    mcap_val = row.get("ff_mcap_beur")
+    ff_mcap = float(mcap_val) * 1000 if mcap_val and str(mcap_val).strip() else None
+    return SelectionListEntry(internal_key=internal_key, review_date=review_date, ff_mcap=ff_mcap, rank=rank)
+
+
+def parse_selection_list_pdf(filepath: Path) -> tuple[list[Asset], list[SelectionListEntry]]:
+    """Parse a STOXX selection list PDF into Assets and SelectionListEntries.
+
+    Args:
+        filepath: Path to a STOXX selection list PDF.
+
+    Returns:
+        A tuple of (assets, entries) where assets has one per unique ISIN.
+    """
+    pdf = pdfplumber.open(filepath)
+    header_text = pdf.pages[0].extract_text().split("\n")
+    review_date = _parse_pdf_date(header_text)
+    all_rows = _extract_pdf_rows(pdf)
+
     seen_keys: set[str] = set()
     assets = []
     entries = []
@@ -185,41 +208,10 @@ def parse_selection_list_pdf(filepath: Path) -> tuple[list[Asset], list[Selectio
         internal_key = str(row.get("int_key", "")).strip()
         if not internal_key:
             continue
-
-        isin_val = str(row.get("isin", "")).strip()
-        isin = isin_val if isin_val else None
-
         if internal_key not in seen_keys:
             seen_keys.add(internal_key)
-            sedol_val = row.get("sedol")
-            sedol = str(sedol_val).strip() if sedol_val and str(sedol_val).strip() else None
-            assets.append(
-                Asset(
-                    internal_key=internal_key,
-                    ric=str(row.get("ric", "")).strip(),
-                    name=str(row.get("company_name", "")).strip(),
-                    country=str(row.get("country", "")).strip(),
-                    currency=str(row.get("currency", "")).strip(),
-                    isin=isin,
-                    sedol=sedol,
-                )
-            )
-
-        rank_val = row.get("rank_final")
-        rank = int(rank_val) if rank_val and str(rank_val).strip() else None
-
-        # PDF uses BEUR, convert to MEUR for consistency
-        mcap_val = row.get("ff_mcap_beur")
-        ff_mcap = float(mcap_val) * 1000 if mcap_val and str(mcap_val).strip() else None
-
-        entries.append(
-            SelectionListEntry(
-                internal_key=internal_key,
-                review_date=review_date,
-                ff_mcap=ff_mcap,
-                rank=rank,
-            )
-        )
+            assets.append(_asset_from_pdf_row(row))
+        entries.append(_entry_from_pdf_row(row, internal_key, review_date))
 
     return assets, entries
 
@@ -309,6 +301,36 @@ def compute_membership_intervals(
     )
 
 
+def _select_buffer_retained(
+    ranked: list[SelectionListEntry], prior_membership: set[str], target: int
+) -> list[IndexMembership]:
+    """Retain prior members from the buffer zone (positions 551-750)."""
+    members: list[IndexMembership] = []
+    for entry in ranked[550:750]:
+        if len(members) >= target:
+            break
+        if entry.internal_key in prior_membership:
+            members.append(
+                IndexMembership(
+                    internal_key=entry.internal_key, is_member=True, entry_reason=EntryReason.BUFFER_RETAINED
+                )
+            )
+    return members
+
+
+def _fill_remaining(ranked: list[SelectionListEntry], existing_keys: set[str], target: int) -> list[IndexMembership]:
+    """Fill remaining slots to *target* from the highest-ranked candidates not yet selected."""
+    members: list[IndexMembership] = []
+    for entry in ranked:
+        if len(members) >= target:
+            break
+        if entry.internal_key not in existing_keys:
+            members.append(
+                IndexMembership(internal_key=entry.internal_key, is_member=True, entry_reason=EntryReason.FILL_TO_600)
+            )
+    return members
+
+
 @task
 def compute_membership(
     entries: list[SelectionListEntry],
@@ -324,7 +346,6 @@ def compute_membership(
     Returns:
         List of exactly 600 IndexMembership results.
     """
-    # Filter to ranked entries, sort by rank ASC then internal_key ASC for deterministic tiebreaker
     ranked = [e for e in entries if e.rank is not None]
     ranked.sort(key=lambda e: (e.rank, e.internal_key))
 
@@ -336,34 +357,19 @@ def compute_membership(
             for e in ranked[:600]
         ]
 
-    members: list[IndexMembership] = []
+    # Phase 1: top 550 are automatic members
+    members = [
+        IndexMembership(internal_key=e.internal_key, is_member=True, entry_reason=EntryReason.TOP_550)
+        for e in ranked[:550]
+    ]
 
-    # Positions 1-550: automatic members
-    for entry in ranked[:550]:
-        members.append(
-            IndexMembership(internal_key=entry.internal_key, is_member=True, entry_reason=EntryReason.TOP_550)
-        )
+    # Phase 2: retain prior members from buffer zone
+    slots_needed = 600 - len(members)
+    members.extend(_select_buffer_retained(ranked, prior_membership, slots_needed))
 
-    # Positions 551-750: retain prior members (buffer zone)
-    buffer_zone = ranked[550:750]
-    for entry in buffer_zone:
-        if len(members) >= 600:
-            break
-        if entry.internal_key in prior_membership:
-            members.append(
-                IndexMembership(
-                    internal_key=entry.internal_key, is_member=True, entry_reason=EntryReason.BUFFER_RETAINED
-                )
-            )
-
-    # Fill remaining slots to 600 from largest remaining by FF Mcap
+    # Phase 3: fill remaining slots
     member_keys = {m.internal_key for m in members}
-    remaining = [e for e in ranked if e.internal_key not in member_keys]
-    for entry in remaining:
-        if len(members) >= 600:
-            break
-        members.append(
-            IndexMembership(internal_key=entry.internal_key, is_member=True, entry_reason=EntryReason.FILL_TO_600)
-        )
+    slots_needed = 600 - len(members)
+    members.extend(_fill_remaining(ranked, member_keys, slots_needed))
 
     return members
