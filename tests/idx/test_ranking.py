@@ -89,3 +89,36 @@ class TestValidateRankingTable:
         df = pl.DataFrame(data)
         # Should not raise (just warns)
         validate_ranking_table.fn(df, [rd])
+
+    def test_missing_review_date_warns(self):
+        """Validation warns when a review date has no row in the table."""
+        rd = date(2024, 9, 1)
+        missing_rd = date(2024, 10, 1)
+        data = {"date": [rd], "RIC1": [1]}
+        df = pl.DataFrame(data)
+        validate_ranking_table.fn(df, [rd, missing_rd])
+
+
+class TestBuildRankingTableEdgeCases:
+    """Edge cases for ranking table construction."""
+
+    def test_entries_without_ric_column(self):
+        """Entries missing a 'ric' column get RICs joined from assets."""
+        rd = date(2024, 12, 1)
+        assets = pl.DataFrame({"internal_key": ["K1"], "ric": ["R1"]})
+        entries = pl.DataFrame({"internal_key": ["K1"], "review_date": [rd], "rank": [1], "ff_mcap": [100.0]})
+        membership = pl.DataFrame({"internal_key": ["K1"], "is_member": [True], "entry_reason": ["top_550"]})
+        result = build_ranking_table.fn(assets, [entries], [membership], [rd])
+        assert "R1" in result.columns
+        row = result.filter(pl.col("date") == rd)
+        assert row["R1"][0] == 1
+
+    def test_no_ric_column_and_no_assets(self):
+        """No RIC column and empty key-to-ric mapping produces empty result."""
+        rd = date(2024, 12, 1)
+        assets = pl.DataFrame({"internal_key": [], "ric": []})
+        entries = pl.DataFrame({"internal_key": ["K1"], "review_date": [rd], "rank": [1], "ff_mcap": [100.0]})
+        membership = pl.DataFrame({"internal_key": ["K1"], "is_member": [True], "entry_reason": ["top_550"]})
+        result = build_ranking_table.fn(assets, [entries], [membership], [rd])
+        assert "date" in result.columns
+        assert len(result) == 0
