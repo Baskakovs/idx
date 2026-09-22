@@ -1,3 +1,14 @@
+[![Release](https://img.shields.io/github/v/release/Baskakovs/idx?sort=semver)](https://github.com/Baskakovs/idx/releases)
+
+[![rhiza v1.8.0](https://img.shields.io/badge/rhiza-v1.8.0-blue)](https://github.com/jebel-quant/rhiza/releases/tag/v1.8.0)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![Python versions](https://img.shields.io/badge/Python-3.11%20•%203.12%20•%203.13%20•%203.14-blue?logo=python)](https://www.python.org/)
+[![CI](https://github.com/Baskakovs/idx/actions/workflows/rhiza_ci.yml/badge.svg?event=push)](https://github.com/Baskakovs/idx/actions/workflows/rhiza_ci.yml)
+[![Code style: ruff](https://img.shields.io/badge/code%20style-ruff-000000.svg?logo=ruff)](https://github.com/astral-sh/ruff)
+[![uv](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/uv/main/assets/badge/v0.json)](https://github.com/astral-sh/uv)
+[![CodeFactor](https://www.codefactor.io/repository/github/Baskakovs/idx/badge)](https://www.codefactor.io/repository/github/Baskakovs/idx)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/Baskakovs/idx/badge)](https://scorecard.dev/viewer/?uri=github.com/Baskakovs/idx)
+
 # idx
 
 STOXX Europe 600 index membership pipeline. Downloads selection lists from stoxx.com, extracts security data, computes index membership using the buffer rule, enriches assets with Yukka entity IDs, and stores everything as Parquet files in Cloudflare R2.
@@ -134,29 +145,146 @@ On any unhandled exception, the flow sends a Slack notification via the `yukka-n
 
 ## Development
 
-### Testing
+Run `make help` to see all available targets:
 
-```bash
-pip install -e ".[test]"
-pytest
+```
+ task                section         needs                 does
+ book                Book            test benchmark        build the companion
+                                     stress                book
+                                     hypothesis-test
+                                     paper
+ book-nav            Book                                  check that every
+                                                           mkdocs nav entry
+                                                           resolves in the
+                                                           built book
+ marimo              Book            install               start the Marimo
+                                                           editor
+ marimo-validate     Book            install               check that every
+                                                           Marimo notebook runs
+ serve               Book            book                  build the book and
+                                                           serve it on port
+                                                           8000
+ clean               Dev                                   remove build
+                                                           artifacts and stale
+                                                           local branches
+ doctor              Dev                                   check local
+                                                           prerequisites
+ setup               Dev                                   run the repository's
+                                                           own environment
+                                                           setup hook
+ docker-build        Docker                                build the Docker
+                                                           image
+ docker-clean        Docker                                remove the Docker
+                                                           image
+ docker-run          Docker          docker-build          run the Docker
+                                                           container
+ lfs-install         Git LFS                               configure git-lfs
+                                                           for this repository
+ lfs-pull            Git LFS                               download the LFS
+                                                           files for the
+                                                           current branch
+ lfs-status          Git LFS                               show the status of
+                                                           LFS files
+ lfs-track           Git LFS                               list the patterns
+                                                           tracked by git-lfs
+ failed-workflows    GitHub Helpers                        list recent failing
+                                                           workflow runs
+ latest-release      GitHub Helpers                        show information
+                                                           about the latest
+                                                           GitHub release
+ view-issues         GitHub Helpers                        list open issues
+ view-prs            GitHub Helpers                        list open pull
+                                                           requests
+ whoami              GitHub Helpers                        check github auth
+                                                           status
+ workflow-status     GitHub Helpers                        show recent runs for
+                                                           the release workflow
+ paper               Paper                                 compile the LaTeX
+                                                           paper to PDF
+ paper-clean         Paper                                 remove the LaTeX
+                                                           build artifacts
+ presentation        Presentation                          generate the HTML
+                                                           slides with Marp
+ presentation-pdf    Presentation                          generate the PDF
+                                                           slides with Marp
+ presentation-serve  Presentation                          serve the slides
+                                                           with Marp's live
+                                                           preview
+ all                 Python          fmt deps test         run every gate, as
+                                     docs-coverage         CI does
+                                     security license
+                                     typecheck rhiza-test
+ coverage            Python          install               measure coverage and
+                                                           write
+                                                           _tests/coverage.xml
+ deps                Python          install               run deptry over the
+                                                           contributed folders
+ docs-coverage       Python          install               check docstring
+                                                           coverage with
+                                                           interrogate
+ install             Python          setup                 create the venv and
+                                                           sync dependencies
+ license             Python          install               scan for copyleft
+                                                           licences
+ security            Python          install               run the bandit
+                                                           security scan
+ test                Python          install               run all tests
+ test-lowest         Python          install               run the tests
+                                                           against the oldest
+                                                           dependencies the
+                                                           manifest allows
+ typecheck           Python          install               run ty and/or mypy
+                                                           (typechecker = ty |
+                                                           mypy | both)
+ docs-examples       Quality         install               check the fenced
+                                                           examples in the docs
+                                                           tree
+ fmt                 Quality                               run the pre-commit
+                                                           hooks over all files
+ complexity          Quality                               fail on a block
+                                                           above the
+                                                           cyclomatic-complexi…
+                                                           ceiling
+ test-pyproject      Quality         install               run the
+                                                           pyproject.toml
+                                                           structure checks,
+                                                           verbosely
+ rhiza-test          Quality         install               run the rhiza
+                                                           repository checks
+ semgrep             Quality                               run the semgrep
+                                                           static analysis
+                                                           rules
+ todos               Quality                               list every TODO,
+                                                           FIXME and HACK
+                                                           comment
+ update              Template                              sync the rhiza
+                                                           template into this
+                                                           repository
+ benchmark           Testing extras  install               run the performance
+                                                           benchmarks
+ hypothesis-test     Testing extras  install               run the
+                                                           property-based tests
+ stress              Testing extras  install               run the stress and
+                                                           load tests
 ```
 
-### Linting
+### Quick start
 
 ```bash
-pip install -e ".[lint]"
-ruff check src/ tests/
-ruff format --check src/ tests/
+make install   # create venv, sync deps, install pre-commit hooks
+make test      # run the full test suite with coverage
+make fmt       # run all pre-commit hooks (ruff, bandit, markdownlint, …)
+make typecheck # run ty + mypy --strict over src/
 ```
 
 ### CI
 
-CI runs via GitHub Actions using the [Rhiza](https://github.com/jebel-quant/rhiza) reusable workflow, which runs tests across the Python version matrix defined in `pyproject.toml` classifiers (3.11-3.14), plus linting and type checking.
+CI runs via GitHub Actions using the [Rhiza](https://github.com/jebel-quant/rhiza) reusable workflow (`rhiza_ci.yml`), which runs tests across the Python version matrix defined in `pyproject.toml` classifiers (3.11–3.14), plus linting, type checking, security scanning, and license compliance.
 
 ### Branch protection
 
 The `main` branch requires:
 - Pull request with review
-- Passing `lint` and `typecheck` status checks
+- Passing CI status checks
 - Linear commit history
 - No force pushes
