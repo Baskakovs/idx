@@ -56,6 +56,10 @@ filename = "pyproject.toml"
 search = 'version = "{current_version}"'
 replace = 'version = "{new_version}"'
 
+[tool.check_test_layout]
+enforce = false
+reason = "Tests use TestFunctionName classes to group tests by function; per-module coverage is enforced by the 90% coverage gate."
+
 [tool.deptry.package_module_name_map]
 python-dotenv = "dotenv"
 prefect-slack = "prefect"
