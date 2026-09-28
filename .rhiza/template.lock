@@ -1,7 +1,7 @@
-sha: 371314b93a460e27d648c87377e8fa252bd92d15
+sha: 77a450079014daba000d42908b6e8419d1e97135
 repo: Jebel-Quant/rhiza
 host: github
-ref: v1.8.0
+ref: v1.9.0
 include: []
 exclude: []
 templates: []
@@ -11,6 +11,7 @@ files:
 - .bandit
 - .editorconfig
 - .github/CONFIG.md
+- .github/PULL_REQUEST_TEMPLATE.md
 - .github/dependabot.yml
 - .github/release.yml
 - .github/rulesets/main-branch-protection.json
@@ -36,5 +37,5 @@ files:
 - pytest.ini
 - ruff.toml
 - tests/test_rhiza_packaging.py
-synced_at: '2026-09-22T08:10:06Z'
+synced_at: '2026-09-28T10:36:44Z'
 strategy: merge
