@@ -11,7 +11,6 @@ from idx.extract import Asset, SelectionListEntry
 
 
 @pytest.mark.asyncio
-@patch("idx.main.SlackWebhook", new_callable=AsyncMock)
 @patch("idx.main.write_reviews")
 @patch("idx.main.write_ranks")
 @patch("idx.main.write_assets")
@@ -45,7 +44,6 @@ async def test_main_empty_download(
 
 
 @pytest.mark.asyncio
-@patch("idx.main.SlackWebhook", new_callable=AsyncMock)
 @patch("idx.main.write_reviews")
 @patch("idx.main.write_ranks")
 @patch("idx.main.write_assets")
@@ -127,7 +125,6 @@ async def test_main_full_pipeline(
 
 
 @pytest.mark.asyncio
-@patch("idx.main.SlackWebhook", new_callable=AsyncMock)
 @patch("idx.main.download_selection_lists", new_callable=AsyncMock)
 async def test_main_slack_notification_on_error(mock_download, mock_slack):
     """Slack notification is sent when the pipeline fails."""
@@ -145,7 +142,6 @@ async def test_main_slack_notification_on_error(mock_download, mock_slack):
 
 
 @pytest.mark.asyncio
-@patch("idx.main.SlackWebhook", new_callable=AsyncMock)
 @patch("idx.main.write_reviews")
 @patch("idx.main.write_ranks")
 @patch("idx.main.write_assets")
@@ -184,7 +180,6 @@ async def test_main_empty_entries_skipped(
 
 
 @pytest.mark.asyncio
-@patch("idx.main.SlackWebhook", new_callable=AsyncMock)
 @patch("idx.main.write_reviews")
 @patch("idx.main.write_ranks")
 @patch("idx.main.write_assets")

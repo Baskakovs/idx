@@ -4,20 +4,10 @@ from __future__ import annotations
 
 import io
 from datetime import date
-from unittest.mock import MagicMock, patch
 
 import polars as pl
-import pytest
 
 from idx.storage import write_assets, write_ranks, write_reviews
-
-
-@pytest.fixture
-def mock_s3():
-    """Patch _get_s3_client and R2_BUCKET env var, return the mock client."""
-    mock_client = MagicMock()
-    with patch("idx.storage._get_s3_client", return_value=mock_client):
-        yield mock_client
 
 
 class TestWriteAssets:
