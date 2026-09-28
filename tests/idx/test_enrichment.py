@@ -12,14 +12,9 @@ from idx.enrichment import report_unresolved_assets, resolve_yukka_ids
 class TestResolveYukkaIds:
     """Tests for Yukka ID resolution."""
 
-    @patch("idx.enrichment._build_client")
-    def test_isin_lookup(self, mock_build):
+    def test_isin_lookup(self, mock_yukka_client):
         """Assets with ISINs get yukka_ids via ISIN lookup."""
-        mock_client = MagicMock()
-        mock_build.return_value = mock_client
-
-        # ISIN lookup returns a mapping
-        mock_client.post.return_value = MagicMock(
+        mock_yukka_client.post.return_value = MagicMock(
             status_code=200,
             json=MagicMock(return_value={"ISIN1": {"alpha_id": "YK1"}}),
             raise_for_status=MagicMock(),
@@ -37,14 +32,9 @@ class TestResolveYukkaIds:
         assert "yukka_id" in result.columns
         assert result["yukka_id"][0] == "YK1"
 
-    @patch("idx.enrichment._build_client")
-    def test_ric_fallback(self, mock_build):
+    def test_ric_fallback(self, mock_yukka_client):
         """Assets without ISIN fall back to RIC lookup."""
-        mock_client = MagicMock()
-        mock_build.return_value = mock_client
-
-        # RIC lookup returns mapping (only one call since no ISINs to look up)
-        mock_client.post.return_value = MagicMock(
+        mock_yukka_client.post.return_value = MagicMock(
             status_code=200,
             json=MagicMock(return_value={"R1": {"alpha_id": "YK_RIC"}}),
             raise_for_status=MagicMock(),
@@ -60,12 +50,9 @@ class TestResolveYukkaIds:
         result = resolve_yukka_ids.fn(df)
         assert result["yukka_id"][0] == "YK_RIC"
 
-    @patch("idx.enrichment._build_client")
-    def test_no_match_returns_null(self, mock_build):
+    def test_no_match_returns_null(self, mock_yukka_client):
         """Unresolved assets get null yukka_id."""
-        mock_client = MagicMock()
-        mock_build.return_value = mock_client
-        mock_client.post.return_value = MagicMock(
+        mock_yukka_client.post.return_value = MagicMock(
             status_code=200, json=MagicMock(return_value={}), raise_for_status=MagicMock()
         )
 
@@ -80,12 +67,9 @@ class TestResolveYukkaIds:
         result = resolve_yukka_ids.fn(df)
         assert result["yukka_id"][0] is None
 
-    @patch("idx.enrichment._build_client")
-    def test_existing_yukka_id_column_replaced(self, mock_build):
+    def test_existing_yukka_id_column_replaced(self, mock_yukka_client):
         """If yukka_id column already exists, it gets replaced."""
-        mock_client = MagicMock()
-        mock_build.return_value = mock_client
-        mock_client.post.return_value = MagicMock(
+        mock_yukka_client.post.return_value = MagicMock(
             status_code=200,
             json=MagicMock(return_value={"ISIN1": {"alpha_id": "YK_NEW"}}),
             raise_for_status=MagicMock(),
