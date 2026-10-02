@@ -1,8 +1,8 @@
-"""Build and validate wide-format ranking tables from in-memory DataFrames."""
+"""Build and validate long-format daily membership tables from in-memory DataFrames."""
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 
 import polars as pl
 from prefect import task
@@ -10,132 +10,169 @@ from prefect.cache_policies import NO_CACHE
 
 from idx import get_logger
 
-
-def _build_key_to_ric(assets_df: pl.DataFrame) -> dict[str, str]:
-    """Extract internal_key → RIC mapping from the assets DataFrame."""
-    if "ric" not in assets_df.columns or "internal_key" not in assets_df.columns:
-        return {}
-    return {row[0]: row[1] for row in assets_df.select(["internal_key", "ric"]).iter_rows()}
+_ASSET_COLS = ("ric", "name", "country", "currency", "isin", "sedol")
 
 
-def _compute_review_date_ranks(
+def _build_review_members(
+    assets_df: pl.DataFrame,
     entries_df: pl.DataFrame,
     membership_df: pl.DataFrame,
-    key_to_ric: dict[str, str],
-    all_known_rics: set[str],
-) -> dict[str, int]:
-    """Compute RIC → re-ranked position for one review date."""
-    if "ric" not in entries_df.columns:
-        if not key_to_ric:
-            return {}
-        ric_series = entries_df["internal_key"].map_elements(lambda x: key_to_ric.get(x), return_dtype=pl.Utf8)
-        entries_df = entries_df.with_columns(ric_series.alias("ric"))
+) -> pl.DataFrame:
+    """Build member rows for one review date, re-ranked 1..N.
 
-    entries_df = entries_df.filter(pl.col("ric").is_not_null())
+    Joins entries with asset identifiers so that every member row carries the
+    point-in-time values for ric, name, country, currency, isin, and sedol.
+
+    Args:
+        assets_df: Assets DataFrame for this review date.
+        entries_df: Entries DataFrame for this review date.
+        membership_df: Membership DataFrame for this review date.
+
+    Returns:
+        DataFrame with columns [internal_key, ric, name, country, currency,
+        isin, sedol, rank] for members only.
+    """
     member_keys = set(membership_df.filter(pl.col("is_member"))["internal_key"].to_list())
 
-    ric_rank: dict[str, int] = {}
-    for entry_row in entries_df.iter_rows(named=True):
-        ric = entry_row["ric"]
-        if ric in ric_rank:
-            continue
-        all_known_rics.add(ric)
-        if entry_row["internal_key"] in member_keys:
-            ric_rank[ric] = entry_row["rank"]
+    members_df = (
+        entries_df.filter(pl.col("rank").is_not_null() & pl.col("internal_key").is_in(list(member_keys)))
+        .sort("rank", "internal_key")
+        .unique(subset=["internal_key"], keep="first")
+        .sort("rank", "internal_key")
+    )
 
-    sorted_rics = sorted(ric_rank.items(), key=lambda x: x[1])
-    return {ric: i + 1 for i, (ric, _) in enumerate(sorted_rics)}
+    # Join asset identifiers onto member entries
+    available_cols = [c for c in _ASSET_COLS if c in assets_df.columns]
+    if available_cols:
+        asset_cols_df = assets_df.select(["internal_key", *available_cols]).unique(subset=["internal_key"], keep="last")
+        members_df = members_df.join(asset_cols_df, on="internal_key", how="left", suffix="_asset")
+        # Prefer asset value; fall back to entry value if present
+        for col in available_cols:
+            asset_col = f"{col}_asset"
+            if asset_col in members_df.columns:
+                members_df = members_df.with_columns(pl.coalesce(pl.col(asset_col), pl.col(col)).alias(col)).drop(
+                    asset_col
+                )
+
+    # Select output columns, adding any missing ones as null
+    out_cols = ["internal_key"]
+    for col in _ASSET_COLS:
+        if col not in members_df.columns:
+            members_df = members_df.with_columns(pl.lit(None).cast(pl.Utf8).alias(col))
+        out_cols.append(col)
+
+    members_df = members_df.select(out_cols).with_row_index("rank", offset=1).cast({"rank": pl.Int64})
+
+    return members_df
 
 
-def _forward_fill_and_clean(wide_df: pl.DataFrame) -> pl.DataFrame:
-    """Expand to daily range, forward-fill, and replace sentinel 0 with null."""
-    min_date: date = wide_df["date"].min()  # type: ignore[assignment]  # ty: ignore[invalid-assignment]
-    max_date = date.today()
-    daily_dates = pl.DataFrame({"date": pl.date_range(min_date, max_date, eager=True)})
-
-    result = daily_dates.join(wide_df, on="date", how="left").sort("date")
-    ric_cols = [c for c in result.columns if c != "date"]
-    result = result.with_columns(pl.col(c).forward_fill() for c in ric_cols)
-    return result.with_columns(pl.when(pl.col(c) == 0).then(None).otherwise(pl.col(c)).alias(c) for c in ric_cols)
+_OUTPUT_SCHEMA = {
+    "date": pl.Date,
+    "internal_key": pl.Utf8,
+    "ric": pl.Utf8,
+    "name": pl.Utf8,
+    "country": pl.Utf8,
+    "currency": pl.Utf8,
+    "isin": pl.Utf8,
+    "sedol": pl.Utf8,
+    "rank": pl.Int64,
+}
 
 
 @task(cache_policy=NO_CACHE)
-def build_ranking_table(
-    assets_df: pl.DataFrame,
+def build_membership_table(
+    assets_dfs: list[pl.DataFrame],
     entries_dfs: list[pl.DataFrame],
     membership_dfs: list[pl.DataFrame],
     review_dates: list[date],
 ) -> pl.DataFrame:
-    """Build a wide-format ranking table with RICs as columns and daily dates as rows.
+    """Build a long-format daily membership table with point-in-time identifiers.
 
-    Members get their rank; non-members get null. Uses 0 as a sentinel during
-    forward-fill to correctly propagate exits.
+    For each review date, members get their re-ranked position (1..N) and all
+    identifiers from that period's selection list.  Between review dates the
+    values are forward-filled daily.  When a field is null or empty, the last
+    known value for that internal_key is carried forward.
 
     Args:
-        assets_df: Deduplicated assets DataFrame with 'internal_key' and 'ric' columns.
+        assets_dfs: One assets DataFrame per review date (aligned with review_dates).
         entries_dfs: One entries DataFrame per review date (aligned with review_dates).
         membership_dfs: One membership DataFrame per review date (aligned with review_dates).
         review_dates: Sorted list of review dates.
 
     Returns:
-        DataFrame with a ``date`` column and one column per RIC containing forward-filled ranks.
+        DataFrame with columns [date, internal_key, ric, name, country,
+        currency, isin, sedol, rank] — one row per member per calendar day.
     """
     if not review_dates:
-        return pl.DataFrame({"date": []}).cast({"date": pl.Date})
+        return pl.DataFrame(schema=_OUTPUT_SCHEMA)
 
-    key_to_ric = _build_key_to_ric(assets_df)
-    all_known_rics: set[str] = set()
-    long_rows: list[dict[str, object]] = []
+    logger = get_logger()
 
-    for rd, entries_df, membership_df in zip(review_dates, entries_dfs, membership_dfs, strict=True):
-        ric_rank = _compute_review_date_ranks(entries_df, membership_df, key_to_ric, all_known_rics)
-        for ric in all_known_rics:
-            long_rows.append({"date": rd, "ric": ric, "rank": ric_rank.get(ric, 0)})
+    # 1. Build per-review-date member snapshots
+    snapshots: list[pl.DataFrame] = []
+    for rd, assets_df, entries_df, membership_df in zip(
+        review_dates, assets_dfs, entries_dfs, membership_dfs, strict=True
+    ):
+        members = _build_review_members(assets_df, entries_df, membership_df)
+        if not members.is_empty():
+            snapshots.append(members.with_columns(pl.lit(rd).cast(pl.Date).alias("review_date")))
 
-    if not long_rows:
-        return pl.DataFrame({"date": []}).cast({"date": pl.Date})
+    if not snapshots:
+        return pl.DataFrame(schema=_OUTPUT_SCHEMA)
 
-    long_df = pl.DataFrame(long_rows).with_columns(pl.col("date").cast(pl.Date))
-    wide_df = long_df.pivot(on="ric", index="date", values="rank")
-    return _forward_fill_and_clean(wide_df)
+    # 2. Forward-fill null/empty string columns across review dates per internal_key
+    all_snapshots = pl.concat(snapshots).sort("review_date")
+    str_cols = [c for c in _ASSET_COLS if c in all_snapshots.columns]
+    all_snapshots = all_snapshots.with_columns(
+        pl.when(pl.col(c).is_not_null() & (pl.col(c) != "")).then(pl.col(c)).otherwise(None).alias(c) for c in str_cols
+    ).with_columns(pl.col(c).forward_fill().over("internal_key") for c in str_cols)
+
+    # 3. Expand to daily rows
+    max_date = date.today()
+    daily_parts: list[pl.DataFrame] = []
+    for i, rd in enumerate(review_dates):
+        end = review_dates[i + 1] if i + 1 < len(review_dates) else max_date + timedelta(days=1)
+        snapshot = all_snapshots.filter(pl.col("review_date") == rd).drop("review_date")
+        if snapshot.is_empty():
+            continue
+        dates = pl.date_range(rd, end - timedelta(days=1), eager=True)
+        date_df = pl.DataFrame({"date": dates})
+        daily_parts.append(date_df.join(snapshot, how="cross"))
+
+    result = pl.concat(daily_parts).sort("date", "rank")
+    logger.info("Built membership table: %d rows, %d unique members", len(result), result["internal_key"].n_unique())
+    return result
 
 
 @task(cache_policy=NO_CACHE)
-def validate_ranking_table(ranking_df: pl.DataFrame, review_dates: list[date]) -> None:
-    """Check that each review date row in the ranking table has ranks covering 1-600.
+def validate_membership_table(membership_df: pl.DataFrame, review_dates: list[date]) -> None:
+    """Check that each review date has ranks covering 1-600.
 
     Args:
-        ranking_df: Wide-format ranking DataFrame (date column + RIC columns).
+        membership_df: Long-format membership DataFrame.
         review_dates: Review dates that should be validated.
     """
     logger = get_logger()
-    ric_cols = [c for c in ranking_df.columns if c != "date"]
-
-    if not ric_cols or ranking_df.is_empty():
-        logger.warning("Ranking table is empty, skipping validation")
+    if membership_df.is_empty():
+        logger.warning("Membership table is empty, skipping validation")
         return
 
     for rd in review_dates:
-        row = ranking_df.filter(pl.col("date") == rd)
-        if row.is_empty():
-            logger.warning("Ranking validation: no row for review date %s", rd)
+        day_df = membership_df.filter(pl.col("date") == rd)
+        if day_df.is_empty():
+            logger.warning("Membership validation: no rows for review date %s", rd)
             continue
 
-        ranks = set()
-        for col in ric_cols:
-            val = row[col][0]
-            if val is not None:
-                ranks.add(int(val))
-
+        ranks = set(day_df["rank"].to_list())
         expected = set(range(1, 601))
         missing = expected - ranks
         if missing:
             logger.warning(
-                "Ranking validation FAILED for %s: missing %d ranks in 1-600 (e.g. %s). Only %d distinct ranks found.",
+                "Membership validation FAILED for %s: missing %d ranks in 1-600 (e.g. %s). Only %d distinct ranks.",
                 rd,
                 len(missing),
                 sorted(missing)[:10],
                 len(ranks),
             )
         else:
-            logger.info("Ranking validation passed for %s: ranks 1-600 all present (%d total ranks)", rd, len(ranks))
+            logger.info("Membership validation passed for %s: ranks 1-600 all present (%d total)", rd, len(ranks))

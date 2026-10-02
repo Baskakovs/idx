@@ -25,7 +25,7 @@ src/idx/
 ├── enrichment.py     # Resolve Yukka entity IDs via ISIN and RIC lookups
 ├── extract.py        # Parse PDF/CSV files; compute index membership (buffer rule)
 ├── main.py           # Prefect flow orchestrating the full pipeline
-├── ranking.py        # Build wide-format daily ranking table
+├── ranking.py        # Build long-format daily membership table with point-in-time RICs
 └── storage.py        # Write Parquet files to Cloudflare R2
 
 tests/idx/            # Test files mirror src/idx/ (one test file per module)

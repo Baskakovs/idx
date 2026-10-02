@@ -12,10 +12,10 @@ from idx.extract import Asset, SelectionListEntry
 
 @pytest.mark.asyncio
 @patch("idx.main.write_reviews")
-@patch("idx.main.write_ranks")
+@patch("idx.main.write_membership")
 @patch("idx.main.write_assets")
-@patch("idx.main.validate_ranking_table")
-@patch("idx.main.build_ranking_table")
+@patch("idx.main.validate_membership_table")
+@patch("idx.main.build_membership_table")
 @patch("idx.main.report_unresolved_assets")
 @patch("idx.main.resolve_yukka_ids")
 @patch("idx.main.compute_membership")
@@ -30,7 +30,7 @@ async def test_main_empty_download(
     mock_build,
     mock_validate,
     mock_write_assets,
-    mock_write_ranks,
+    mock_write_membership,
     mock_write_details,
     mock_slack,
 ):
@@ -45,10 +45,10 @@ async def test_main_empty_download(
 
 @pytest.mark.asyncio
 @patch("idx.main.write_reviews")
-@patch("idx.main.write_ranks")
+@patch("idx.main.write_membership")
 @patch("idx.main.write_assets")
-@patch("idx.main.validate_ranking_table")
-@patch("idx.main.build_ranking_table")
+@patch("idx.main.validate_membership_table")
+@patch("idx.main.build_membership_table")
 @patch("idx.main.report_unresolved_assets")
 @patch("idx.main.resolve_yukka_ids")
 @patch("idx.main.compute_membership_intervals")
@@ -65,7 +65,7 @@ async def test_main_full_pipeline(
     mock_build,
     mock_validate,
     mock_write_assets,
-    mock_write_ranks,
+    mock_write_membership,
     mock_write_details,
     mock_slack,
 ):
@@ -108,8 +108,10 @@ async def test_main_full_pipeline(
         }
     )
     mock_resolve.return_value = enriched
-    ranking = pl.DataFrame({"date": [rd], "R1": [1]})
-    mock_build.return_value = ranking
+    membership_table = pl.DataFrame(
+        {"date": [rd], "internal_key": ["K1"], "ric": ["R1"], "rank": [1]},
+    )
+    mock_build.return_value = membership_table
 
     await main.fn()
 
@@ -120,7 +122,7 @@ async def test_main_full_pipeline(
     mock_build.assert_called_once()
     mock_validate.assert_called_once()
     mock_write_assets.assert_called_once()
-    mock_write_ranks.assert_called_once()
+    mock_write_membership.assert_called_once()
     mock_write_details.assert_called_once()
 
 
@@ -143,10 +145,10 @@ async def test_main_slack_notification_on_error(mock_download, mock_slack):
 
 @pytest.mark.asyncio
 @patch("idx.main.write_reviews")
-@patch("idx.main.write_ranks")
+@patch("idx.main.write_membership")
 @patch("idx.main.write_assets")
-@patch("idx.main.validate_ranking_table")
-@patch("idx.main.build_ranking_table")
+@patch("idx.main.validate_membership_table")
+@patch("idx.main.build_membership_table")
 @patch("idx.main.report_unresolved_assets")
 @patch("idx.main.resolve_yukka_ids")
 @patch("idx.main.compute_membership_intervals")
@@ -163,7 +165,7 @@ async def test_main_empty_entries_skipped(
     mock_build,
     mock_validate,
     mock_write_assets,
-    mock_write_ranks,
+    mock_write_membership,
     mock_write_details,
     mock_slack,
 ):
@@ -181,10 +183,10 @@ async def test_main_empty_entries_skipped(
 
 @pytest.mark.asyncio
 @patch("idx.main.write_reviews")
-@patch("idx.main.write_ranks")
+@patch("idx.main.write_membership")
 @patch("idx.main.write_assets")
-@patch("idx.main.validate_ranking_table")
-@patch("idx.main.build_ranking_table")
+@patch("idx.main.validate_membership_table")
+@patch("idx.main.build_membership_table")
 @patch("idx.main.report_unresolved_assets")
 @patch("idx.main.resolve_yukka_ids")
 @patch("idx.main.compute_membership_intervals")
@@ -201,7 +203,7 @@ async def test_main_merges_duplicate_review_dates(
     mock_build,
     mock_validate,
     mock_write_assets,
-    mock_write_ranks,
+    mock_write_membership,
     mock_write_details,
     mock_slack,
 ):
@@ -241,7 +243,9 @@ async def test_main_merges_duplicate_review_dates(
             "last_included": [rd, rd],
         }
     )
-    mock_build.return_value = pl.DataFrame({"date": [rd], "R1": [1], "R2": [2]})
+    mock_build.return_value = pl.DataFrame(
+        {"date": [rd, rd], "internal_key": ["K1", "K2"], "ric": ["R1", "R2"], "rank": [1, 2]}
+    )
 
     await main.fn()
 
