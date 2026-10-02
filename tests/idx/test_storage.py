@@ -7,7 +7,7 @@ from datetime import date
 
 import polars as pl
 
-from idx.storage import write_assets, write_ranks, write_reviews
+from idx.storage import write_assets, write_membership, write_reviews
 
 
 class TestWriteAssets:
@@ -57,31 +57,34 @@ class TestWriteAssets:
         mock_s3.put_object.assert_not_called()
 
 
-class TestWriteRanks:
-    """Tests for write_ranks task."""
+class TestWriteMembership:
+    """Tests for write_membership task."""
 
     def test_uploads_parquet(self, mock_s3):
-        """Writes ranking table as parquet to R2."""
-        ranking_df = pl.DataFrame(
+        """Writes membership table as parquet to R2."""
+        membership_df = pl.DataFrame(
             {
-                "date": [date(2024, 9, 1), date(2024, 12, 1)],
-                "R1": [1, 2],
-                "R2": [3, None],
+                "date": [date(2024, 9, 1), date(2024, 9, 1)],
+                "internal_key": ["K1", "K2"],
+                "ric": ["R1", "R2"],
+                "rank": [1, 2],
             }
         )
-        write_ranks.fn(ranking_df)
+        write_membership.fn(membership_df)
 
         mock_s3.put_object.assert_called_once()
         call_kwargs = mock_s3.put_object.call_args[1]
-        assert call_kwargs["Key"] == "STOXX600_dev/ranking.parquet"
+        assert call_kwargs["Key"] == "STOXX600_dev/membership.parquet"
 
         result = pl.read_parquet(io.BytesIO(call_kwargs["Body"]))
         assert len(result) == 2
 
     def test_empty_df_skips_upload(self, mock_s3):
         """Empty DataFrame skips upload."""
-        ranking_df = pl.DataFrame({"date": []}).cast({"date": pl.Date})
-        write_ranks.fn(ranking_df)
+        membership_df = pl.DataFrame(
+            schema={"date": pl.Date, "internal_key": pl.Utf8, "ric": pl.Utf8, "rank": pl.Int64}
+        )
+        write_membership.fn(membership_df)
         mock_s3.put_object.assert_not_called()
 
 

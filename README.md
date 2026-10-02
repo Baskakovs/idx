@@ -45,8 +45,8 @@ stoxx.com (PDF/CSV)
 
 | File | Description |
 |------|-------------|
-| `assets.parquet` | Static security identifiers: RIC, ISIN, SEDOL, name, country, currency, yukka_id |
-| `rankings.parquet` | Wide-format daily ranking table (date × RIC columns) |
+| `assets.parquet` | Deduplicated security identifiers (latest non-null per column): RIC, ISIN, SEDOL, name, country, currency, yukka_id |
+| `membership.parquet` | Long-format daily membership table: one row per member per day with point-in-time RIC and rank |
 | `reviews/{date}.parquet` | Per-review snapshot: entries joined with membership (free-float market cap, comments, entry reason) |
 
 ## Assumptions
@@ -59,6 +59,62 @@ stoxx.com (PDF/CSV)
 - PDF files use a fixed URL pattern with year and month only.
 - The default index symbol is `sxxp` (STOXX Europe 600).
 - Available months before 2021 are irregular and hardcoded in `AVAILABLE_MONTHS`. From 2021 onward, quarterly months (March, June, September, December) are assumed.
+
+### Identifier mutability
+
+The only stable identifier across review periods is `internal_key` (STOXX's own
+surrogate).  Both RIC and ISIN can change between reviews — exchange migrations,
+rebrands, redomiciliations, and share consolidations are common.
+
+**Example — Nestlé (`internal_key` 461669) across three review dates:**
+
+| Review date | ISIN         | RIC | Rank |
+|-------------|--------------|-----|-----:|
+| 2015-10 | CH0038863350 | NESN.VX | 1 |
+| 2017-05 | CH0038863350 | NESN.S | 2 |
+| 2026-06 | CH0038863349 | *(empty)* | 4 |
+
+The RIC changed when SIX Swiss Exchange migrated from `.VX` to `.S`.  From
+June 2026 STOXX stopped publishing ISINs (and sometimes RICs) in the CSV files
+altogether.
+
+**Solution — point-in-time membership table (`membership.parquet`):**
+
+The pipeline stores a long-format daily table with all identifiers that were
+valid on each date, rather than collapsing to a single value per company.  On
+each review date, members get the identifiers from that period's selection list.
+Between reviews, every column except `internal_key` is forward-filled.  When a
+review date has an empty or null field (e.g. STOXX stopped publishing ISINs from
+June 2026), the last known value for that `internal_key` is carried forward.
+
+```
+┌────────────┬──────────────┬─────────┬────────┬─────┬─────┬──────────────┬───────┬──────┐
+│    date    │ internal_key │   ric   │  name  │ ... │ ... │     isin     │ sedol │ rank │
+├────────────┼──────────────┼─────────┼────────┼─────┼─────┼──────────────┼───────┼──────┤
+│ 2015-10-01 │ 461669       │ NESN.VX │ NESTLE │ ... │ ... │ CH0038863350 │ ...   │    1 │
+│ 2015-10-01 │ 448816       │ ING.AS  │ ING    │ ... │ ... │ NL0000303600 │ ...   │    3 │
+├────────────┼──────────────┼─────────┼────────┼─────┼─────┼──────────────┼───────┼──────┤
+│ ...        │ ...          │ ...     │ ...    │     │     │ ...          │       │  ... │
+├────────────┼──────────────┼─────────┼────────┼─────┼─────┼──────────────┼───────┼──────┤
+│ 2017-05-01 │ 461669       │ NESN.S  │ NESTLE │ ... │ ... │ CH0038863350 │ ...   │    2 │
+│ 2017-05-01 │ 448816       │ INGA.AS │ ING    │ ... │ ... │ NL0011821202 │ ...   │    5 │
+├────────────┼──────────────┼─────────┼────────┼─────┼─────┼──────────────┼───────┼──────┤
+│ ...        │ ...          │ ...     │ ...    │     │     │ ...          │       │  ... │
+├────────────┼──────────────┼─────────┼────────┼─────┼─────┼──────────────┼───────┼──────┤
+│ 2026-06-01 │ 461669       │ NESN.S  │ NESTLE │ ... │ ... │ CH0038863350 │ ...   │    4 │
+│ 2026-06-01 │ 448816       │ INGA.AS │ ING    │ ... │ ... │ NL0011821202 │ ...   │    7 │
+└────────────┴──────────────┴─────────┴────────┴─────┴─────┴──────────────┴───────┴──────┘
+```
+
+Full columns: `date`, `internal_key`, `ric`, `name`, `country`, `currency`,
+`isin`, `sedol`, `rank`.  600 rows per day (one per member), ~3,600 days —
+roughly 2.1M rows total.  Consumers filter on `date` to get the current 600
+members with correct identifiers — no joins or column-name lookups needed.
+
+The separate `assets.parquet` still exists for enrichment purposes (yukka_id
+mapping) and uses a coalesce strategy: for each `internal_key`, it keeps the
+**latest non-null** value per column, so that downstream lookups get the current
+RIC without losing historical ISINs.
 
 ### Extraction
 
@@ -83,17 +139,18 @@ stoxx.com (PDF/CSV)
 - Lookups are batched in groups of 100.
 - Unresolved assets are reported as a Prefect table artifact.
 
-### Ranking table
+### Membership table
 
-- The ranking table is in wide format: one column per RIC, one row per calendar day.
-- Ranks are forward-filled from review dates to produce daily values.
-- A sentinel value of `0` is used during forward-fill to propagate membership exits, then replaced with `null` in the final output.
-- Validation checks that ranks 1-100 are present on each review date.
+- The membership table is in long format: one row per member per calendar day, with columns `date`, `internal_key`, `ric`, `name`, `country`, `currency`, `isin`, `sedol`, `rank`.
+- On each review date, members are re-ranked 1..N from their original selection list ranks.
+- All identifiers are point-in-time: each review date uses the values from that period's selection list. Null or empty fields are forward-filled from the previous review per `internal_key`, so if STOXX stops publishing a field (e.g. ISINs from June 2026), the last known value carries forward.
+- Between review dates, all columns are forward-filled daily. When a company exits the index, its rows stop at the next review date.
+- Validation checks that ranks 1-600 are present on each review date.
 
 ### Storage (Cloudflare R2)
 
 - Data is stored as Parquet files in a Cloudflare R2 bucket, accessed via boto3's S3-compatible API.
-- Each pipeline run overwrites the full `assets.parquet` and `rankings.parquet` files.
+- Each pipeline run overwrites the full `assets.parquet` and `membership.parquet` files.
 - Review files are written per review date to `reviews/{date}.parquet`.
 - Files are publicly readable via the `R2_URL` base URL.
 

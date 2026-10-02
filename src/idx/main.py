@@ -13,8 +13,8 @@ from idx import get_logger
 from idx.download import download_selection_lists
 from idx.enrichment import report_unresolved_assets, resolve_yukka_ids
 from idx.extract import compute_membership, compute_membership_intervals, parse_selection_list
-from idx.ranking import build_ranking_table, validate_ranking_table
-from idx.storage import write_assets, write_ranks, write_reviews
+from idx.ranking import build_membership_table, validate_membership_table
+from idx.storage import write_assets, write_membership, write_reviews
 
 
 def _parse_downloaded_files(downloaded: list[Any], logger: Any) -> dict[date, tuple[list[Any], list[Any]]]:
@@ -58,6 +58,12 @@ def _compute_all_memberships(
     return assets_dfs, entries_dfs, membership_dfs
 
 
+def _dedup_assets(assets: pl.DataFrame) -> pl.DataFrame:
+    """Deduplicate assets by internal_key, keeping the latest non-null value per column."""
+    non_key_cols = [c for c in assets.columns if c != "internal_key"]
+    return assets.group_by("internal_key").agg(pl.col(c).drop_nulls().last().alias(c) for c in non_key_cols)
+
+
 @flow(name="stoxx-600-scraper", log_prints=True)
 async def main(
     periods: list[tuple[int, int]] | None = None,
@@ -84,11 +90,7 @@ async def main(
             return
 
         intervals = compute_membership_intervals(membership_dfs, sorted_dates)
-        all_assets = (
-            pl.concat(assets_dfs)
-            .unique(subset=["internal_key"], keep="first")
-            .join(intervals, on="internal_key", how="inner")
-        )
+        all_assets = _dedup_assets(pl.concat(assets_dfs)).join(intervals, on="internal_key", how="inner")
         logger.info(
             "Built %d asset rows (%d unique ISINs)",
             len(all_assets),
@@ -98,11 +100,11 @@ async def main(
         enriched_assets = resolve_yukka_ids(all_assets)
         report_unresolved_assets(enriched_assets)
 
-        ranking_df = build_ranking_table(enriched_assets, entries_dfs, membership_dfs, sorted_dates)
-        validate_ranking_table(ranking_df, sorted_dates)
+        membership_table = build_membership_table(assets_dfs, entries_dfs, membership_dfs, sorted_dates)
+        validate_membership_table(membership_table, sorted_dates)
 
         write_assets(enriched_assets)
-        write_ranks(ranking_df)
+        write_membership(membership_table)
         for entries_df, membership_df, rd in zip(entries_dfs, membership_dfs, sorted_dates, strict=True):
             write_reviews(entries_df, membership_df, rd)
     except Exception as e:

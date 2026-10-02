@@ -54,13 +54,13 @@ def write_assets(enriched_assets: pl.DataFrame) -> None:
 
 
 @task(cache_policy=NO_CACHE)
-def write_ranks(ranking_df: pl.DataFrame) -> None:
-    """Write wide-format ranking table to rankings.parquet in R2."""
+def write_membership(membership_df: pl.DataFrame) -> None:
+    """Write long-format daily membership table to membership.parquet in R2."""
     logger = get_logger()
-    if ranking_df.is_empty():
-        logger.warning("No ranking data to write")
+    if membership_df.is_empty():
+        logger.warning("No membership data to write")
         return
-    _upload_parquet(ranking_df, "ranking.parquet")
+    _upload_parquet(membership_df, "membership.parquet")
 
 
 @task(cache_policy=NO_CACHE)

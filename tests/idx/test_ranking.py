@@ -6,119 +6,254 @@ from datetime import date
 
 import polars as pl
 
-from idx.ranking import build_ranking_table, validate_ranking_table
+from idx.ranking import build_membership_table, validate_membership_table
+
+_EXPECTED_COLS = {"date", "internal_key", "ric", "name", "country", "currency", "isin", "sedol", "rank"}
 
 
-class TestBuildRankingTable:
-    """Tests for wide-format ranking table construction."""
+def _make_assets(**overrides):
+    """Build a single-row assets DataFrame with sensible defaults."""
+    defaults = {
+        "internal_key": ["K1"],
+        "ric": ["R1"],
+        "name": ["N1"],
+        "country": ["DE"],
+        "currency": ["EUR"],
+        "isin": ["IS1"],
+        "sedol": ["SE1"],
+    }
+    defaults.update(overrides)
+    return pl.DataFrame(defaults)
+
+
+def _make_entries(rd, **overrides):
+    """Build a single-row entries DataFrame with sensible defaults."""
+    defaults = {"internal_key": ["K1"], "review_date": [rd], "rank": [1], "ff_mcap": [100.0]}
+    defaults.update(overrides)
+    return pl.DataFrame(defaults)
+
+
+def _make_membership(**overrides):
+    """Build a single-row membership DataFrame with sensible defaults."""
+    defaults = {"internal_key": ["K1"], "is_member": [True], "entry_reason": ["top_550"]}
+    defaults.update(overrides)
+    return pl.DataFrame(defaults)
+
+
+class TestBuildMembershipTable:
+    """Tests for long-format membership table construction."""
 
     def test_empty_review_dates(self):
         """Empty review dates produce an empty DataFrame."""
-        assets = pl.DataFrame({"internal_key": [], "ric": []})
-        result = build_ranking_table.fn(assets, [], [], [])
-        assert "date" in result.columns
+        result = build_membership_table.fn([], [], [], [])
+        assert set(result.columns) == _EXPECTED_COLS
         assert len(result) == 0
 
     def test_single_review_date(self):
-        """Single review date produces rows from that date to today."""
+        """Single review date produces daily rows from that date to today."""
         rd = date(2024, 12, 1)
-        assets = pl.DataFrame({"internal_key": ["K1", "K2"], "ric": ["R1", "R2"]})
-        entries = pl.DataFrame(
-            {
-                "internal_key": ["K1", "K2"],
-                "review_date": [rd, rd],
-                "rank": [1, 2],
-                "ff_mcap": [100.0, 50.0],
-            }
+        assets = _make_assets(
+            internal_key=["K1", "K2"],
+            ric=["R1", "R2"],
+            name=["N1", "N2"],
+            country=["DE", "FR"],
+            currency=["EUR", "EUR"],
+            isin=["IS1", "IS2"],
+            sedol=["SE1", "SE2"],
         )
-        membership = pl.DataFrame(
-            {
-                "internal_key": ["K1", "K2"],
-                "is_member": [True, False],
-                "entry_reason": ["top_550", "top_550"],
-            }
+        entries = _make_entries(rd, internal_key=["K1", "K2"], rank=[1, 2], ff_mcap=[100.0, 50.0], review_date=[rd, rd])
+        membership = _make_membership(
+            internal_key=["K1", "K2"], is_member=[True, False], entry_reason=["top_550", "top_550"]
         )
-        result = build_ranking_table.fn(assets, [entries], [membership], [rd])
-        assert "date" in result.columns
-        assert "R1" in result.columns
-        # R1 is a member -> has rank; R2 is not -> sentinel 0 -> null after cleanup
+        result = build_membership_table.fn([assets], [entries], [membership], [rd])
+
+        # Only K1 is a member
+        assert set(result["internal_key"].unique().to_list()) == {"K1"}
         row = result.filter(pl.col("date") == rd)
-        assert row["R1"][0] == 1
-        assert row["R2"][0] is None
+        assert row["rank"][0] == 1
+        assert row["ric"][0] == "R1"
+        assert row["name"][0] == "N1"
+        assert row["isin"][0] == "IS1"
+        expected_days = (date.today() - rd).days + 1
+        assert len(result) == expected_days
 
-    def test_forward_fill(self):
-        """Ranks are forward-filled across daily dates."""
-        rd = date(2025, 6, 1)
-        assets = pl.DataFrame({"internal_key": ["K1"], "ric": ["R1"]})
-        entries = pl.DataFrame({"internal_key": ["K1"], "review_date": [rd], "rank": [5], "ff_mcap": [100.0]})
-        membership = pl.DataFrame({"internal_key": ["K1"], "is_member": [True], "entry_reason": ["top_550"]})
-        result = build_ranking_table.fn(assets, [entries], [membership], [rd])
-        # Day after review should also have rank 1 (re-ranked from original 5)
-        day_after = result.filter(pl.col("date") == date(2025, 6, 2))
-        if not day_after.is_empty():
-            assert day_after["R1"][0] == 1
+    def test_forward_fill_between_reviews(self):
+        """Ranks, RICs, and identifiers are forward-filled between review dates."""
+        rd1 = date(2025, 6, 1)
+        rd2 = date(2025, 6, 5)
+        assets1 = _make_assets()
+        assets2 = _make_assets()
+        entries1 = _make_entries(rd1, rank=[5])
+        entries2 = _make_entries(rd2, rank=[3])
+        membership = _make_membership()
+
+        result = build_membership_table.fn(
+            [assets1, assets2], [entries1, entries2], [membership, membership], [rd1, rd2]
+        )
+
+        mid = result.filter(pl.col("date") == date(2025, 6, 3))
+        assert mid["rank"][0] == 1
+        assert mid["ric"][0] == "R1"
+        assert mid["name"][0] == "N1"
+
+    def test_point_in_time_ric(self):
+        """RIC changes are tracked per review date."""
+        rd1 = date(2025, 1, 1)
+        rd2 = date(2025, 4, 1)
+        assets1 = _make_assets(ric=["NESN.VX"])
+        assets2 = _make_assets(ric=["NESN.S"])
+        entries1 = _make_entries(rd1)
+        entries2 = _make_entries(rd2, rank=[2])
+        membership = _make_membership()
+
+        result = build_membership_table.fn(
+            [assets1, assets2], [entries1, entries2], [membership, membership], [rd1, rd2]
+        )
+
+        before = result.filter(pl.col("date") == date(2025, 3, 31))
+        assert before["ric"][0] == "NESN.VX"
+        on_rd2 = result.filter(pl.col("date") == rd2)
+        assert on_rd2["ric"][0] == "NESN.S"
+
+    def test_null_fields_forward_fill_from_previous(self):
+        """Empty identifiers at a review date carry forward from the previous review."""
+        rd1 = date(2025, 1, 1)
+        rd2 = date(2025, 4, 1)
+        assets1 = _make_assets(ric=["NESN.S"], isin=["CH0038863350"], name=["NESTLE"])
+        assets2 = _make_assets(ric=[""], isin=[None], name=[""])
+        entries1 = _make_entries(rd1)
+        entries2 = _make_entries(rd2, rank=[2])
+        membership = _make_membership()
+
+        result = build_membership_table.fn(
+            [assets1, assets2], [entries1, entries2], [membership, membership], [rd1, rd2]
+        )
+
+        on_rd2 = result.filter(pl.col("date") == rd2)
+        assert on_rd2["ric"][0] == "NESN.S"
+        assert on_rd2["isin"][0] == "CH0038863350"
+        assert on_rd2["name"][0] == "NESTLE"
+
+    def test_member_exit(self):
+        """A company leaving the index has no rows after the new review date."""
+        rd1 = date(2025, 1, 1)
+        rd2 = date(2025, 4, 1)
+        assets1 = _make_assets()
+        assets2 = _make_assets()
+        entries1 = _make_entries(rd1)
+        entries2 = _make_entries(rd2)
+        membership1 = _make_membership(is_member=[True])
+        membership2 = _make_membership(is_member=[False])
+
+        result = build_membership_table.fn(
+            [assets1, assets2], [entries1, entries2], [membership1, membership2], [rd1, rd2]
+        )
+
+        assert result.filter(pl.col("date") == date(2025, 3, 31))["internal_key"][0] == "K1"
+        assert result.filter(pl.col("date") == rd2).is_empty()
 
 
-class TestValidateRankingTable:
-    """Tests for ranking table validation."""
-
-    def test_empty_table_warns(self):
-        """Empty ranking table logs a warning and returns."""
-        df = pl.DataFrame({"date": []}).cast({"date": pl.Date})
-        validate_ranking_table.fn(df, [])
-
-    def test_valid_ranking_passes(self):
-        """Table with ranks 1-100 passes validation."""
-        rd = date(2024, 9, 1)
-        data = {"date": [rd]}
-        for i in range(1, 101):
-            data[f"RIC{i}"] = [i]
-        # Add some extra columns with None (non-members)
-        data["RIC_EXTRA"] = [None]
-        df = pl.DataFrame(data)
-        # Should not raise
-        validate_ranking_table.fn(df, [rd])
-
-    def test_missing_ranks_warns(self):
-        """Table missing some ranks 1-100 logs a warning."""
-        rd = date(2024, 9, 1)
-        data = {"date": [rd]}
-        # Only ranks 1-50
-        for i in range(1, 51):
-            data[f"RIC{i}"] = [i]
-        df = pl.DataFrame(data)
-        # Should not raise (just warns)
-        validate_ranking_table.fn(df, [rd])
-
-    def test_missing_review_date_warns(self):
-        """Validation warns when a review date has no row in the table."""
-        rd = date(2024, 9, 1)
-        missing_rd = date(2024, 10, 1)
-        data = {"date": [rd], "RIC1": [1]}
-        df = pl.DataFrame(data)
-        validate_ranking_table.fn(df, [rd, missing_rd])
-
-
-class TestBuildRankingTableEdgeCases:
-    """Edge cases for ranking table construction."""
+class TestBuildMembershipTableEdgeCases:
+    """Edge cases for membership table construction."""
 
     def test_entries_without_ric_column(self):
-        """Entries missing a 'ric' column get RICs joined from assets."""
+        """Entries missing a 'ric' column get RICs from assets."""
         rd = date(2024, 12, 1)
-        assets = pl.DataFrame({"internal_key": ["K1"], "ric": ["R1"]})
+        assets = _make_assets()
         entries = pl.DataFrame({"internal_key": ["K1"], "review_date": [rd], "rank": [1], "ff_mcap": [100.0]})
-        membership = pl.DataFrame({"internal_key": ["K1"], "is_member": [True], "entry_reason": ["top_550"]})
-        result = build_ranking_table.fn(assets, [entries], [membership], [rd])
-        assert "R1" in result.columns
+        membership = _make_membership()
+        result = build_membership_table.fn([assets], [entries], [membership], [rd])
         row = result.filter(pl.col("date") == rd)
-        assert row["R1"][0] == 1
+        assert row["ric"][0] == "R1"
 
-    def test_no_ric_column_and_no_assets(self):
-        """No RIC column and empty key-to-ric mapping produces empty result."""
+    def test_no_members_produces_empty(self):
+        """No members at any review date produces empty result."""
         rd = date(2024, 12, 1)
-        assets = pl.DataFrame({"internal_key": [], "ric": []})
-        entries = pl.DataFrame({"internal_key": ["K1"], "review_date": [rd], "rank": [1], "ff_mcap": [100.0]})
-        membership = pl.DataFrame({"internal_key": ["K1"], "is_member": [True], "entry_reason": ["top_550"]})
-        result = build_ranking_table.fn(assets, [entries], [membership], [rd])
-        assert "date" in result.columns
+        assets = _make_assets()
+        entries = _make_entries(rd)
+        membership = _make_membership(is_member=[False])
+        result = build_membership_table.fn([assets], [entries], [membership], [rd])
         assert len(result) == 0
+
+    def test_two_companies_multiple_reviews(self):
+        """Two companies across two review dates with one changing RIC."""
+        rd1 = date(2025, 1, 1)
+        rd2 = date(2025, 1, 3)
+        assets1 = _make_assets(
+            internal_key=["K1", "K2"],
+            ric=["ING.AS", "ASML.AS"],
+            name=["ING", "ASML"],
+            country=["NL", "NL"],
+            currency=["EUR", "EUR"],
+            isin=["NL1", "NL2"],
+            sedol=["S1", "S2"],
+        )
+        assets2 = _make_assets(
+            internal_key=["K1", "K2"],
+            ric=["INGA.AS", "ASML.AS"],
+            name=["ING", "ASML"],
+            country=["NL", "NL"],
+            currency=["EUR", "EUR"],
+            isin=["NL1", "NL2"],
+            sedol=["S1", "S2"],
+        )
+        entries1 = _make_entries(
+            rd1, internal_key=["K1", "K2"], rank=[1, 2], ff_mcap=[100.0, 90.0], review_date=[rd1, rd1]
+        )
+        entries2 = _make_entries(
+            rd2, internal_key=["K1", "K2"], rank=[2, 1], ff_mcap=[90.0, 100.0], review_date=[rd2, rd2]
+        )
+        membership = _make_membership(
+            internal_key=["K1", "K2"], is_member=[True, True], entry_reason=["top_550", "top_550"]
+        )
+        result = build_membership_table.fn(
+            [assets1, assets2], [entries1, entries2], [membership, membership], [rd1, rd2]
+        )
+
+        day1 = result.filter(pl.col("date") == rd1).sort("rank")
+        assert day1["ric"].to_list() == ["ING.AS", "ASML.AS"]
+
+        day3 = result.filter(pl.col("date") == rd2).sort("rank")
+        assert day3["ric"].to_list() == ["ASML.AS", "INGA.AS"]
+
+
+class TestValidateMembershipTable:
+    """Tests for membership table validation."""
+
+    def test_empty_table_warns(self):
+        """Empty membership table logs a warning and returns."""
+        df = pl.DataFrame(schema={"date": pl.Date, "internal_key": pl.Utf8, "ric": pl.Utf8, "rank": pl.Int64})
+        validate_membership_table.fn(df, [])
+
+    def test_valid_membership_passes(self):
+        """Table with ranks 1-600 passes validation."""
+        rd = date(2024, 9, 1)
+        df = pl.DataFrame(
+            {
+                "date": [rd] * 600,
+                "internal_key": [f"K{i}" for i in range(1, 601)],
+                "ric": [f"R{i}" for i in range(1, 601)],
+                "rank": list(range(1, 601)),
+            }
+        )
+        validate_membership_table.fn(df, [rd])
+
+    def test_missing_ranks_warns(self):
+        """Table missing some ranks logs a warning."""
+        rd = date(2024, 9, 1)
+        df = pl.DataFrame(
+            {
+                "date": [rd] * 50,
+                "internal_key": [f"K{i}" for i in range(1, 51)],
+                "ric": [f"R{i}" for i in range(1, 51)],
+                "rank": list(range(1, 51)),
+            }
+        )
+        validate_membership_table.fn(df, [rd])
+
+    def test_missing_review_date_warns(self):
+        """Validation warns when a review date has no rows in the table."""
+        rd = date(2024, 9, 1)
+        missing_rd = date(2024, 10, 1)
+        df = pl.DataFrame({"date": [rd], "internal_key": ["K1"], "ric": ["R1"], "rank": [1]})
+        validate_membership_table.fn(df, [rd, missing_rd])
