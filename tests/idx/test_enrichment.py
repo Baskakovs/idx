@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+from datetime import date
 from unittest.mock import MagicMock, patch
 
 import polars as pl
 
-from idx.enrichment import report_unresolved_assets, resolve_yukka_ids
+from idx.enrichment import enrich_membership_with_yukka_ids, report_unresolved_assets, resolve_yukka_ids
 
 
 class TestResolveYukkaIds:
@@ -85,6 +86,122 @@ class TestResolveYukkaIds:
         )
 
         result = resolve_yukka_ids.fn(df)
+        assert result["yukka_id"][0] == "YK_NEW"
+
+
+class TestEnrichMembershipWithYukkaIds:
+    """Tests for membership-level Yukka ID enrichment."""
+
+    def test_isin_lookup(self, mock_yukka_client):
+        """Membership rows with ISINs get yukka_ids via ISIN lookup."""
+        mock_yukka_client.post.return_value = MagicMock(
+            status_code=200,
+            json=MagicMock(return_value={"ISIN1": {"alpha_id": "YK1"}}),
+            raise_for_status=MagicMock(),
+        )
+
+        df = pl.DataFrame(
+            {
+                "date": [date(2025, 1, 1)],
+                "internal_key": ["K1"],
+                "ric": ["R1"],
+                "isin": ["ISIN1"],
+                "rank": [1],
+            }
+        )
+
+        result = enrich_membership_with_yukka_ids.fn(df)
+        assert "yukka_id" in result.columns
+        assert result["yukka_id"][0] == "YK1"
+
+    def test_ric_fallback(self, mock_yukka_client):
+        """Membership rows without ISIN match fall back to RIC lookup."""
+        # ISIN lookup returns nothing, RIC lookup resolves
+        mock_yukka_client.post.side_effect = [
+            MagicMock(
+                status_code=200,
+                json=MagicMock(return_value={}),
+                raise_for_status=MagicMock(),
+            ),
+            MagicMock(
+                status_code=200,
+                json=MagicMock(return_value={"R1": {"alpha_id": "YK_RIC"}}),
+                raise_for_status=MagicMock(),
+            ),
+        ]
+
+        df = pl.DataFrame(
+            {
+                "date": [date(2025, 1, 1)],
+                "internal_key": ["K1"],
+                "ric": ["R1"],
+                "isin": ["ISIN1"],
+                "rank": [1],
+            }
+        )
+
+        result = enrich_membership_with_yukka_ids.fn(df)
+        assert result["yukka_id"][0] == "YK_RIC"
+
+    def test_no_match_returns_null(self, mock_yukka_client):
+        """Unresolved membership rows get null yukka_id."""
+        mock_yukka_client.post.return_value = MagicMock(
+            status_code=200, json=MagicMock(return_value={}), raise_for_status=MagicMock()
+        )
+
+        df = pl.DataFrame(
+            {
+                "date": [date(2025, 1, 1)],
+                "internal_key": ["K1"],
+                "ric": ["R1"],
+                "isin": [None],
+                "rank": [1],
+            }
+        )
+
+        result = enrich_membership_with_yukka_ids.fn(df)
+        assert result["yukka_id"][0] is None
+
+    def test_no_isin_column(self, mock_yukka_client):
+        """Membership without isin column falls back to RIC lookup."""
+        mock_yukka_client.post.return_value = MagicMock(
+            status_code=200,
+            json=MagicMock(return_value={"R1": {"alpha_id": "YK_RIC"}}),
+            raise_for_status=MagicMock(),
+        )
+
+        df = pl.DataFrame(
+            {
+                "date": [date(2025, 1, 1)],
+                "internal_key": ["K1"],
+                "ric": ["R1"],
+                "rank": [1],
+            }
+        )
+
+        result = enrich_membership_with_yukka_ids.fn(df)
+        assert result["yukka_id"][0] == "YK_RIC"
+
+    def test_existing_yukka_id_replaced(self, mock_yukka_client):
+        """If yukka_id column already exists, it gets replaced."""
+        mock_yukka_client.post.return_value = MagicMock(
+            status_code=200,
+            json=MagicMock(return_value={"ISIN1": {"alpha_id": "YK_NEW"}}),
+            raise_for_status=MagicMock(),
+        )
+
+        df = pl.DataFrame(
+            {
+                "date": [date(2025, 1, 1)],
+                "internal_key": ["K1"],
+                "ric": ["R1"],
+                "isin": ["ISIN1"],
+                "rank": [1],
+                "yukka_id": ["YK_OLD"],
+            }
+        )
+
+        result = enrich_membership_with_yukka_ids.fn(df)
         assert result["yukka_id"][0] == "YK_NEW"
 
 

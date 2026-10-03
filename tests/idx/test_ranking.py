@@ -6,9 +6,9 @@ from datetime import date
 
 import polars as pl
 
-from idx.ranking import build_membership_table, validate_membership_table
+from idx.ranking import build_assets_from_membership, build_membership_table, validate_membership_table
 
-_EXPECTED_COLS = {"date", "internal_key", "ric", "name", "country", "currency", "isin", "sedol", "rank"}
+_EXPECTED_COLS = {"date", "internal_key", "ric", "name", "country", "currency", "isin", "sedol", "rank", "yukka_id"}
 
 
 def _make_assets(**overrides):
@@ -257,3 +257,90 @@ class TestValidateMembershipTable:
         missing_rd = date(2024, 10, 1)
         df = pl.DataFrame({"date": [rd], "internal_key": ["K1"], "ric": ["R1"], "rank": [1]})
         validate_membership_table.fn(df, [rd, missing_rd])
+
+
+class TestBuildAssetsFromMembership:
+    """Tests for deriving assets table from membership."""
+
+    def test_empty_membership(self):
+        """Empty membership produces empty assets with correct schema."""
+        from idx.ranking import _OUTPUT_SCHEMA
+
+        df = pl.DataFrame(schema=_OUTPUT_SCHEMA)
+        result = build_assets_from_membership.fn(df)
+        assert "internal_key" in result.columns
+        assert "first_included" in result.columns
+        assert "last_included" in result.columns
+        assert "yukka_id" in result.columns
+        assert len(result) == 0
+
+    def test_single_member(self):
+        """Single member produces one asset row with correct dates."""
+        rd1 = date(2025, 1, 1)
+        rd2 = date(2025, 1, 3)
+        df = pl.DataFrame(
+            {
+                "date": [rd1, rd2],
+                "internal_key": ["K1", "K1"],
+                "ric": ["R1", "R1"],
+                "name": ["N1", "N1"],
+                "country": ["DE", "DE"],
+                "currency": ["EUR", "EUR"],
+                "isin": ["IS1", "IS1"],
+                "sedol": ["SE1", "SE1"],
+                "rank": [1, 1],
+                "yukka_id": ["YK1", "YK1"],
+            }
+        )
+        result = build_assets_from_membership.fn(df)
+        assert len(result) == 1
+        assert result["internal_key"][0] == "K1"
+        assert result["first_included"][0] == rd1
+        assert result["last_included"][0] == rd2
+        assert result["yukka_id"][0] == "YK1"
+
+    def test_takes_last_non_null(self):
+        """Assets use the last non-null value for each identifier column."""
+        rd1 = date(2025, 1, 1)
+        rd2 = date(2025, 1, 2)
+        df = pl.DataFrame(
+            {
+                "date": [rd1, rd2],
+                "internal_key": ["K1", "K1"],
+                "ric": ["OLD.R", "NEW.R"],
+                "name": ["OldName", "NewName"],
+                "country": ["DE", "DE"],
+                "currency": ["EUR", "EUR"],
+                "isin": ["IS1", None],
+                "sedol": [None, "SE2"],
+                "rank": [1, 1],
+                "yukka_id": [None, "YK1"],
+            }
+        )
+        result = build_assets_from_membership.fn(df)
+        assert result["ric"][0] == "NEW.R"
+        assert result["name"][0] == "NewName"
+        assert result["isin"][0] == "IS1"
+        assert result["sedol"][0] == "SE2"
+        assert result["yukka_id"][0] == "YK1"
+
+    def test_multiple_members(self):
+        """Multiple members produce multiple asset rows sorted by internal_key."""
+        rd = date(2025, 1, 1)
+        df = pl.DataFrame(
+            {
+                "date": [rd, rd],
+                "internal_key": ["K2", "K1"],
+                "ric": ["R2", "R1"],
+                "name": ["N2", "N1"],
+                "country": ["FR", "DE"],
+                "currency": ["EUR", "EUR"],
+                "isin": ["IS2", "IS1"],
+                "sedol": ["SE2", "SE1"],
+                "rank": [2, 1],
+                "yukka_id": ["YK2", "YK1"],
+            }
+        )
+        result = build_assets_from_membership.fn(df)
+        assert len(result) == 2
+        assert result["internal_key"].to_list() == ["K1", "K2"]

@@ -76,6 +76,7 @@ _OUTPUT_SCHEMA = {
     "isin": pl.Utf8,
     "sedol": pl.Utf8,
     "rank": pl.Int64,
+    "yukka_id": pl.Utf8,
 }
 
 
@@ -142,6 +143,47 @@ def build_membership_table(
     result = pl.concat(daily_parts).sort("date", "rank")
     logger.info("Built membership table: %d rows, %d unique members", len(result), result["internal_key"].n_unique())
     return result
+
+
+_ASSETS_ID_COLS = ("ric", "name", "country", "currency", "isin", "sedol", "yukka_id")
+
+
+@task(cache_policy=NO_CACHE)
+def build_assets_from_membership(membership_df: pl.DataFrame) -> pl.DataFrame:
+    """Derive the assets table from an enriched membership table.
+
+    Groups by internal_key, taking the most recent non-null value for each
+    identifier column and computing first/last included dates.
+
+    Args:
+        membership_df: Enriched membership DataFrame with yukka_id column.
+
+    Returns:
+        DataFrame with columns [internal_key, ric, name, country, currency,
+        isin, sedol, yukka_id, first_included, last_included].
+    """
+    if membership_df.is_empty():
+        schema = {"internal_key": pl.Utf8}
+        for col in _ASSETS_ID_COLS:
+            schema[col] = pl.Utf8
+        schema["first_included"] = pl.Date
+        schema["last_included"] = pl.Date
+        return pl.DataFrame(schema=schema)
+
+    available = [c for c in _ASSETS_ID_COLS if c in membership_df.columns]
+    agg_exprs = [pl.col(c).drop_nulls().last().alias(c) for c in available]
+    agg_exprs.append(pl.col("date").min().alias("first_included"))
+    agg_exprs.append(pl.col("date").max().alias("last_included"))
+
+    result = membership_df.group_by("internal_key").agg(agg_exprs)
+
+    # Add missing identifier columns as null
+    for col in _ASSETS_ID_COLS:
+        if col not in result.columns:
+            result = result.with_columns(pl.lit(None).cast(pl.Utf8).alias(col))
+
+    col_order = ["internal_key", *_ASSETS_ID_COLS, "first_included", "last_included"]
+    return result.select(col_order).sort("internal_key")
 
 
 @task(cache_policy=NO_CACHE)
