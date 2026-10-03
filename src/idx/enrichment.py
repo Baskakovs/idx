@@ -124,6 +124,82 @@ def resolve_yukka_ids(assets_df: pl.DataFrame) -> pl.DataFrame:
 
 
 @task(cache_policy=NO_CACHE)
+def enrich_membership_with_yukka_ids(membership_df: pl.DataFrame) -> pl.DataFrame:
+    """Enrich a membership DataFrame with yukka_id column via ISIN and RIC lookups.
+
+    Extracts unique (isin, ric) pairs, resolves yukka IDs via ISIN first
+    with RIC fallback, and joins the result back as a yukka_id column.
+
+    Args:
+        membership_df: Membership DataFrame with at least 'isin' and 'ric' columns.
+
+    Returns:
+        Membership DataFrame with an added 'yukka_id' column (nullable string).
+    """
+    logger = get_logger()
+    client = _build_client()
+    try:
+        # 1. ISIN lookup for all unique non-null ISINs
+        isin_to_yukka: dict[str, str] = {}
+        if "isin" in membership_df.columns:
+            isins = membership_df.filter(pl.col("isin").is_not_null())["isin"].unique().to_list()
+            if isins:
+                isin_to_yukka = _batch_lookup(client, "/v2/isin_to_entity", isins)
+                logger.info("ISIN lookup resolved %d / %d", len(isin_to_yukka), len(isins))
+
+        # 2. RIC fallback for ISINs that didn't resolve
+        ric_to_yukka: dict[str, str] = {}
+        resolved_isins = set(isin_to_yukka.keys())
+        if "isin" in membership_df.columns:
+            unresolved_df = membership_df.filter(pl.col("isin").is_null() | ~pl.col("isin").is_in(list(resolved_isins)))
+        else:
+            unresolved_df = membership_df
+        rics = unresolved_df["ric"].unique().drop_nulls().to_list() if "ric" in unresolved_df.columns else []
+        rics = [r for r in rics if r]
+        if rics:
+            ric_to_yukka = _batch_lookup(client, "/ric_to_entity", rics)
+            logger.info("RIC lookup resolved %d / %d", len(ric_to_yukka), len(rics))
+    finally:
+        client.close()
+
+    total = len(isin_to_yukka) + len(ric_to_yukka)
+    logger.info("Total resolved: %d unique identifiers", total)
+
+    # 3. Build ISIN-based mapping
+    if isin_to_yukka:
+        isin_map_df = pl.DataFrame({"isin": list(isin_to_yukka.keys()), "_yukka_isin": list(isin_to_yukka.values())})
+    else:
+        isin_map_df = pl.DataFrame({"isin": pl.Series([], dtype=pl.Utf8), "_yukka_isin": pl.Series([], dtype=pl.Utf8)})
+
+    # 4. Build RIC-based mapping
+    if ric_to_yukka:
+        ric_map_df = pl.DataFrame({"ric": list(ric_to_yukka.keys()), "_yukka_ric": list(ric_to_yukka.values())})
+    else:
+        ric_map_df = pl.DataFrame({"ric": pl.Series([], dtype=pl.Utf8), "_yukka_ric": pl.Series([], dtype=pl.Utf8)})
+
+    # 5. Join and coalesce: ISIN match first, then RIC fallback
+    if "yukka_id" in membership_df.columns:
+        membership_df = membership_df.drop("yukka_id")
+
+    result = membership_df
+    if "isin" in result.columns:
+        result = result.cast({"isin": pl.Utf8}).join(isin_map_df, on="isin", how="left")
+    else:
+        result = result.with_columns(pl.lit(None).cast(pl.Utf8).alias("_yukka_isin"))
+
+    if "ric" in result.columns:
+        result = result.join(ric_map_df, on="ric", how="left")
+    else:
+        result = result.with_columns(pl.lit(None).cast(pl.Utf8).alias("_yukka_ric"))
+
+    result = result.with_columns(pl.coalesce(pl.col("_yukka_isin"), pl.col("_yukka_ric")).alias("yukka_id")).drop(
+        "_yukka_isin", "_yukka_ric"
+    )
+
+    return result
+
+
+@task(cache_policy=NO_CACHE)
 def report_unresolved_assets(assets_df: pl.DataFrame) -> None:
     """Create a Prefect artifact reporting all assets without a Yukka ID.
 

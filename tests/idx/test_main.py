@@ -15,9 +15,10 @@ from idx.extract import Asset, SelectionListEntry
 @patch("idx.main.write_membership")
 @patch("idx.main.write_assets")
 @patch("idx.main.validate_membership_table")
+@patch("idx.main.build_assets_from_membership")
 @patch("idx.main.build_membership_table")
 @patch("idx.main.report_unresolved_assets")
-@patch("idx.main.resolve_yukka_ids")
+@patch("idx.main.enrich_membership_with_yukka_ids")
 @patch("idx.main.compute_membership")
 @patch("idx.main.parse_selection_list")
 @patch("idx.main.download_selection_lists", new_callable=AsyncMock)
@@ -25,9 +26,10 @@ async def test_main_empty_download(
     mock_download,
     mock_parse,
     mock_membership,
-    mock_resolve,
+    mock_enrich,
     mock_report,
     mock_build,
+    mock_build_assets,
     mock_validate,
     mock_write_assets,
     mock_write_membership,
@@ -48,10 +50,10 @@ async def test_main_empty_download(
 @patch("idx.main.write_membership")
 @patch("idx.main.write_assets")
 @patch("idx.main.validate_membership_table")
+@patch("idx.main.build_assets_from_membership")
 @patch("idx.main.build_membership_table")
 @patch("idx.main.report_unresolved_assets")
-@patch("idx.main.resolve_yukka_ids")
-@patch("idx.main.compute_membership_intervals")
+@patch("idx.main.enrich_membership_with_yukka_ids")
 @patch("idx.main.compute_membership")
 @patch("idx.main.parse_selection_list")
 @patch("idx.main.download_selection_lists", new_callable=AsyncMock)
@@ -59,10 +61,10 @@ async def test_main_full_pipeline(
     mock_download,
     mock_parse,
     mock_membership,
-    mock_intervals,
-    mock_resolve,
+    mock_enrich,
     mock_report,
     mock_build,
+    mock_build_assets,
     mock_validate,
     mock_write_assets,
     mock_write_membership,
@@ -84,16 +86,21 @@ async def test_main_full_pipeline(
     mock_membership.return_value = [
         IndexMembership(internal_key="K1", is_member=True, entry_reason=EntryReason.BOOTSTRAP),
     ]
-    mock_intervals.return_value = pl.DataFrame(
-        {
-            "internal_key": ["K1"],
-            "first_included": [rd],
-            "last_included": [rd],
-        },
-        schema={"internal_key": pl.Utf8, "first_included": pl.Date, "last_included": pl.Date},
-    )
 
-    enriched = pl.DataFrame(
+    membership_table = pl.DataFrame(
+        {
+            "date": [rd],
+            "internal_key": ["K1"],
+            "ric": ["R1"],
+            "rank": [1],
+            "isin": ["IS1"],
+            "yukka_id": ["YK1"],
+        },
+    )
+    mock_build.return_value = membership_table
+    mock_enrich.return_value = membership_table
+
+    assets_table = pl.DataFrame(
         {
             "internal_key": ["K1"],
             "ric": ["R1"],
@@ -107,19 +114,16 @@ async def test_main_full_pipeline(
             "last_included": [rd],
         }
     )
-    mock_resolve.return_value = enriched
-    membership_table = pl.DataFrame(
-        {"date": [rd], "internal_key": ["K1"], "ric": ["R1"], "rank": [1]},
-    )
-    mock_build.return_value = membership_table
+    mock_build_assets.return_value = assets_table
 
     await main.fn()
 
     mock_parse.assert_called_once()
     mock_membership.assert_called_once()
-    mock_resolve.assert_called_once()
-    mock_report.assert_called_once()
+    mock_enrich.assert_called_once()
     mock_build.assert_called_once()
+    mock_build_assets.assert_called_once()
+    mock_report.assert_called_once()
     mock_validate.assert_called_once()
     mock_write_assets.assert_called_once()
     mock_write_membership.assert_called_once()
@@ -148,10 +152,10 @@ async def test_main_slack_notification_on_error(mock_download, mock_slack):
 @patch("idx.main.write_membership")
 @patch("idx.main.write_assets")
 @patch("idx.main.validate_membership_table")
+@patch("idx.main.build_assets_from_membership")
 @patch("idx.main.build_membership_table")
 @patch("idx.main.report_unresolved_assets")
-@patch("idx.main.resolve_yukka_ids")
-@patch("idx.main.compute_membership_intervals")
+@patch("idx.main.enrich_membership_with_yukka_ids")
 @patch("idx.main.compute_membership")
 @patch("idx.main.parse_selection_list")
 @patch("idx.main.download_selection_lists", new_callable=AsyncMock)
@@ -159,10 +163,10 @@ async def test_main_empty_entries_skipped(
     mock_download,
     mock_parse,
     mock_membership,
-    mock_intervals,
-    mock_resolve,
+    mock_enrich,
     mock_report,
     mock_build,
+    mock_build_assets,
     mock_validate,
     mock_write_assets,
     mock_write_membership,
@@ -186,10 +190,10 @@ async def test_main_empty_entries_skipped(
 @patch("idx.main.write_membership")
 @patch("idx.main.write_assets")
 @patch("idx.main.validate_membership_table")
+@patch("idx.main.build_assets_from_membership")
 @patch("idx.main.build_membership_table")
 @patch("idx.main.report_unresolved_assets")
-@patch("idx.main.resolve_yukka_ids")
-@patch("idx.main.compute_membership_intervals")
+@patch("idx.main.enrich_membership_with_yukka_ids")
 @patch("idx.main.compute_membership")
 @patch("idx.main.parse_selection_list")
 @patch("idx.main.download_selection_lists", new_callable=AsyncMock)
@@ -197,10 +201,10 @@ async def test_main_merges_duplicate_review_dates(
     mock_download,
     mock_parse,
     mock_membership,
-    mock_intervals,
-    mock_resolve,
+    mock_enrich,
     mock_report,
     mock_build,
+    mock_build_assets,
     mock_validate,
     mock_write_assets,
     mock_write_membership,
@@ -225,11 +229,20 @@ async def test_main_merges_duplicate_review_dates(
         IndexMembership(internal_key="K1", is_member=True, entry_reason=EntryReason.BOOTSTRAP),
         IndexMembership(internal_key="K2", is_member=True, entry_reason=EntryReason.BOOTSTRAP),
     ]
-    mock_intervals.return_value = pl.DataFrame(
-        {"internal_key": ["K1", "K2"], "first_included": [rd, rd], "last_included": [rd, rd]},
-        schema={"internal_key": pl.Utf8, "first_included": pl.Date, "last_included": pl.Date},
+
+    membership_table = pl.DataFrame(
+        {
+            "date": [rd, rd],
+            "internal_key": ["K1", "K2"],
+            "ric": ["R1", "R2"],
+            "rank": [1, 2],
+            "yukka_id": [None, None],
+        }
     )
-    mock_resolve.return_value = pl.DataFrame(
+    mock_build.return_value = membership_table
+    mock_enrich.return_value = membership_table
+
+    mock_build_assets.return_value = pl.DataFrame(
         {
             "internal_key": ["K1", "K2"],
             "ric": ["R1", "R2"],
@@ -242,9 +255,6 @@ async def test_main_merges_duplicate_review_dates(
             "first_included": [rd, rd],
             "last_included": [rd, rd],
         }
-    )
-    mock_build.return_value = pl.DataFrame(
-        {"date": [rd, rd], "internal_key": ["K1", "K2"], "ric": ["R1", "R2"], "rank": [1, 2]}
     )
 
     await main.fn()
